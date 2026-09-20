@@ -75,10 +75,18 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
         "scope": scope.strip() or "openid profile email",
         "method": "password",
     }
+    # The local account is the way back in, so it is never removed here, and it cannot be
+    # switched off until single sign-on is actually enabled.
+    warning = ""
+    if local_login != "always" and not cfg["enabled"]:
+        local_login = "always"
+        warning = (" Local sign-in was left on, because single sign-on is not enabled yet and that "
+                   "would have locked everyone out.")
     store.update(lambda s: s["setup"].update({"oidc": cfg, "local_login": local_login}))
-    notice = "Single sign-on settings saved."
+    notice = "Single sign-on settings saved. The local account and its password are unchanged."
+    notice += warning
     if cfg["enabled"]:
-        notice += " Sign-in with the provider appears on the login page."
+        notice += " The provider now appears in the list on the login page."
     return await setup_page(request, notice=notice)
 
 

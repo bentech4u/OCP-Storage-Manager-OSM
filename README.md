@@ -8,6 +8,8 @@ database, so it runs happily on a disconnected installer host.
 
 ![Dashboard](docs/screenshots/home.png)
 
+![Sign in](docs/screenshots/login.png)
+
 ## What it does
 
 * Installs the PowerScale driver either with the **Dell CSM Operator** or with the **Helm chart**,

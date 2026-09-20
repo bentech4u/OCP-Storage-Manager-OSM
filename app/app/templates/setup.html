@@ -66,6 +66,9 @@
   <div class="card">
     <div class="card-head"><div><h2>Single sign-on</h2>
       <div class="sub">Microsoft Entra ID or any OpenID Connect provider</div></div></div>
+    <div class="banner"><span>🔑</span>
+      <div>These settings never touch the local account. It stays available, with the same
+        password, so a directory that is misconfigured or unreachable cannot lock you out.</div></div>
     <form hx-post="/setup/oidc" hx-target="body">
       <div class="check"><input type="checkbox" id="oidcon" name="enabled" {% if setup.oidc.enabled %}checked{% endif %}>
         <label for="oidcon">Offer single sign-on on the login page</label></div>
