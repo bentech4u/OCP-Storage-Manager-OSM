@@ -322,7 +322,12 @@
       <div class="row three">
         <div class="field"><label>Access zone</label><input type="text" name="access_zone" value="System"></div>
         <div class="field"><label>Base path</label><input type="text" name="isi_path" value="/ifs/data/csi"></div>
-        <div class="field"><label>NFS address</label><input type="text" name="az_service_ip" placeholder="defaults to the array endpoint"></div>
+        <div class="field">
+          <label title="The address cluster nodes mount from: a SmartConnect zone name, or an IP that serves NFS on this array">NFS address</label>
+          <input type="text" name="az_service_ip" placeholder="SmartConnect name or NFS export IP"
+                 title="The address cluster nodes mount from: a SmartConnect zone name, or an IP that serves NFS on this array">
+          <div class="hint">SmartConnect zone name, or an NFS export address on this array.
+            Empty uses the array endpoint. Sets AzServiceIP.</div></div>
       </div>
       <div class="check"><input type="checkbox" id="rep" name="replicated">
         <label for="rep">Replicated pair, created on both clusters</label></div>
@@ -344,7 +349,13 @@
         <div class="row three">
           <div class="field"><label>Volume group prefix</label><input type="text" name="volume_group_prefix" value="csi-prod">
             <div class="hint">Prefix, namespace, address and objective must stay under 63 characters.</div></div>
-          <div class="field"><label>Target NFS address</label><input type="text" name="target_az_service_ip" placeholder="defaults to the target array endpoint"></div>
+          <div class="field">
+            <label title="The same thing at the other site: the remote array's SmartConnect name or NFS export IP">Target NFS address</label>
+            <input type="text" name="target_az_service_ip" placeholder="remote SmartConnect name or NFS export IP"
+                   title="The same thing at the other site: the remote array's SmartConnect name or NFS export IP">
+            <div class="hint">The remote array's SmartConnect name or NFS export address, which the
+              disaster recovery cluster's nodes mount after a failover. Empty uses the remote array's
+              endpoint. Sets remoteAzServiceIP.</div></div>
           <div class="field">
             <label>Grouping</label>
             <div class="check"><input type="checkbox" id="ignorens" name="ignore_namespaces">
