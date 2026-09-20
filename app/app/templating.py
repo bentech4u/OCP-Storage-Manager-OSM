@@ -33,7 +33,22 @@ def yesno(value) -> str:
     return "yes" if value else "no"
 
 
+def asset(path: str) -> str:
+    """Static URL with the file's timestamp attached.
+
+    Browsers cache the stylesheet and script hard, so a changed file needs a changed
+    URL; otherwise an updated console renders with the previous layout.
+    """
+    file = Path(__file__).parent / "static" / path
+    try:
+        stamp = int(file.stat().st_mtime)
+    except OSError:
+        stamp = 0
+    return f"/static/{path}?v={stamp}"
+
+
 templates.env.filters["ago"] = ago
 templates.env.filters["yesno"] = yesno
+templates.env.globals["asset"] = asset
 templates.env.globals["app_name"] = APP_NAME
 templates.env.globals["tagline"] = APP_TAGLINE
