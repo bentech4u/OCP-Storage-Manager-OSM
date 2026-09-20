@@ -32,6 +32,8 @@ def _page(request: Request, **extra):
         "repctl_default": tools.default_repctl_choice(),
         "namespace_default": DRIVER_NAMESPACE_DEFAULT,
         "driver_rows": rows,
+        # the form folds away once a driver is actually running somewhere
+        "driver_installed": any(r["status"].get("controller_ready") for r in rows),
     }
     ctx.update(extra)
     return templates.TemplateResponse(request, "install.html", ctx)

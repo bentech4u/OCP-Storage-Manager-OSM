@@ -237,6 +237,10 @@
          hx-trigger="change from:[name='cluster_id'], every 20s" hx-swap="innerHTML">
       {% with rows = driver_rows %}{% include "partials/driver_status.html" %}{% endwith %}
     </div>
+    <details class="fold" {% if not driver_installed %}open{% endif %}>
+      <summary><span class="chev">▸</span> Install or change the driver
+        <span class="muted small">{{ "choose the method and the mode" if not driver_installed
+          else "reinstall, upgrade, or install on another cluster" }}</span></summary>
     <form hx-post="/install/driver" hx-target="#output">
       <div class="choices" style="margin-bottom:1rem">
         <label class="choice"><input type="radio" name="method" value="operator" checked>
@@ -296,6 +300,7 @@
           hx-include="[name=cluster_id]" data-confirm="Uninstall the driver from the selected cluster?">Uninstall</button>
       </div>
     </form>
+    </details>
   </div>
 </section>
 
