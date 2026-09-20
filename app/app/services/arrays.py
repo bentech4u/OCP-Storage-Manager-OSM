@@ -230,6 +230,24 @@ class OneFS:
             "encrypted": bool(p.get("target_certificate_id")),
         } for p in data.get("policies", [])]
 
+    def sync_target_policies(self) -> list[dict]:
+        """Incoming replication: what other arrays send to this one.
+
+        A SyncIQ policy lives only on the source array. The receiving array keeps a
+        target policy instead, which is why a healthy target lists no policies at all.
+        """
+        st, data = self.get("/platform/16/sync/target/policies")
+        if st != 200:
+            return []
+        return [{
+            "name": p.get("name"), "source": p.get("source_host"),
+            "target_path": p.get("target_path"),
+            "last_job_state": p.get("last_job_state"),
+            "writes": p.get("failover_failback_state"),
+            "last_update": p.get("last_update_from_source"),
+            "source_ip": p.get("last_source_coordinator_ip"),
+        } for p in data.get("policies", [])]
+
     def sync_reports(self, limit: int = 10) -> list[dict]:
         st, data = self.get(f"/platform/16/sync/reports?limit={limit}")
         if st != 200:

@@ -134,10 +134,11 @@ async def synciq_partial(request: Request):
             client = OneFS(array["endpoint"], int(array.get("port", 8080)),
                            array["username"], array["password"])
             rows.append({"array": array["name"], "policies": client.sync_policies(),
+                         "incoming": client.sync_target_policies(),
                          "reports": client.sync_reports(6), "error": ""})
         except ArrayError as exc:
             rows.append({"array": array.get("name", array["id"]), "policies": [],
-                         "reports": [], "error": str(exc)})
+                         "incoming": [], "reports": [], "error": str(exc)})
     return templates.TemplateResponse(request, "partials/synciq.html", {"rows": rows})
 
 
