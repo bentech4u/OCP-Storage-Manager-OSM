@@ -32,6 +32,19 @@ def repctl_bin() -> str:
     return path
 
 
+def _private(path: Path) -> None:
+    """Owner-only, and owned by whoever owns the data directory.
+
+    The console and the command line tool may run as different users, so a directory
+    one created must stay usable by the other.
+    """
+    try:
+        os.chmod(path, 0o700)
+    except PermissionError:
+        pass
+    match_owner(path)
+
+
 def migrate_legacy_store() -> list[str]:
     """Move configs an earlier build hid under the data directory into ~/.repctl."""
     moved = []
@@ -51,19 +64,24 @@ def repctl_env() -> dict:
     """Environment for repctl: the real home, so the shell sees the same state."""
     env = tool_env()
     CLUSTER_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(REPCTL_HOME, 0o700)
+    _private(REPCTL_HOME)
     migrate_legacy_store()
     env["HOME"] = str(ROOT)                # repctl derives its store from HOME
     return env
 
 
 def run_repctl(job: Job, args: list[str], timeout: int | None = None) -> int:
-    return job.run([repctl_bin()] + args, env=repctl_env())
+    # repctl writes repctl.log into the current directory, so run it somewhere writable
+    work_dir = DATA_DIR / "logs"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return job.run([repctl_bin()] + args, env=repctl_env(), cwd=str(work_dir))
 
 
 def capture(args: list[str], timeout: int = 90) -> subprocess.CompletedProcess:
+    work_dir = DATA_DIR / "logs"
+    work_dir.mkdir(parents=True, exist_ok=True)
     return subprocess.run([repctl_bin()] + args, capture_output=True, text=True,
-                          timeout=timeout, env=repctl_env())
+                          timeout=timeout, env=repctl_env(), cwd=str(work_dir))
 
 
 def help_text(sub: list[str] | None = None) -> str:
@@ -201,7 +219,7 @@ def sa_kubeconfig(job: Job, kubeconfig: str, cluster_id: str) -> str | None:
     }
     out_dir = DATA_DIR / "repctl-sa"
     out_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(out_dir, 0o700)
+    _private(out_dir)
     path = out_dir / cluster_id
     path.write_text(yaml.safe_dump(cfg, sort_keys=False))
     os.chmod(path, 0o600)
