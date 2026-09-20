@@ -34,9 +34,53 @@ def _page(request: Request, **extra):
         "driver_rows": rows,
         # the form folds away once a driver is actually running somewhere
         "driver_installed": any(r["status"].get("controller_ready") for r in rows),
+        # the step chips at the top follow what is really there, not what was clicked
+        "step_done": {
+            "tools": data["tools"]["repctl"]["found"],
+            "clusters": bool(state["clusters"]),
+            "arrays": bool(state["arrays"]),
+            "driver": any(r["status"].get("controller_ready") for r in rows),
+            "storage_classes": any(c.get("driver", {}).get("storage_classes")
+                                   for c in data["clusters"]),
+            "replication": len(data["clusters"]) > 1 and all(
+                (c.get("replication_config") or {}).get("clusterId")
+                and (c.get("replication_config") or {}).get("targets")
+                for c in data["clusters"]),
+        },
     }
+    ctx["replicated_class"] = any(
+        sc.get("replicated") for c in data["clusters"]
+        for sc in c.get("driver", {}).get("storage_classes", []))
+    ctx["next_step"] = _next_step(ctx)
     ctx.update(extra)
     return templates.TemplateResponse(request, "install.html", ctx)
+
+
+def _next_step(ctx: dict) -> dict:
+    """One sentence telling the operator what to do next, with the place to do it."""
+    done = ctx["step_done"]
+    if not done["clusters"]:
+        return {"text": "Add your first cluster.", "where": "#clusters", "label": "Clusters"}
+    if not done["arrays"]:
+        return {"text": "Register the PowerScale array this site uses.",
+                "where": "#arrays", "label": "Arrays"}
+    if not done["driver"]:
+        return {"text": "Install the driver on a cluster.", "where": "#driver", "label": "Driver"}
+    if len(ctx["clusters"]) > 1 and not done["replication"]:
+        return {"text": "Wire the two clusters together so they can replicate.",
+                "where": "#replication", "label": "Replication"}
+    if len(ctx["clusters"]) > 1 and done["replication"] and not ctx["replicated_class"]:
+        return {"text": "Create a replicated storage class pair, which is what turns new volumes "
+                        "into replicated ones.", "where": "#storageclass", "label": "Storage classes"}
+    if not done["storage_classes"]:
+        return {"text": "Create a storage class so volumes can be provisioned.",
+                "where": "#storageclass", "label": "Storage classes"}
+    if not done["tools"]:
+        return {"text": "Install repctl, which every replication action runs through.",
+                "where": "#tools", "label": "Tools"}
+    return {"text": "Everything is in place. Create a claim with the replicated class, then watch "
+                    "its replication group on the Operations page.",
+            "where": "/operations", "label": "Operations"}
 
 
 @router.get("/install", response_class=HTMLResponse)

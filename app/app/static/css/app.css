@@ -272,3 +272,7 @@ details.fold > summary .muted { font-weight: 450; }
 /* settings that only matter once their switch is on */
 #replication-settings { display: none; }
 .check:has(#rep:checked) ~ #replication-settings { display: block; }
+
+/* the step chips link to their section */
+a.step { text-decoration: none; }
+a.step:hover { border-color: var(--brand); text-decoration: none; }

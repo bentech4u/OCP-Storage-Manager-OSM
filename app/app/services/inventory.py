@@ -31,6 +31,11 @@ def cluster_snapshot(cluster: dict) -> dict:
         out["driver"] = driver_status(kc, cluster.get("namespace", "isilon"))
     except Exception as exc:                              # noqa: BLE001
         out["driver"] = {"error": str(exc)[:200], "pods": []}
+    try:
+        from .replication import controller_config
+        out["replication_config"] = controller_config(kc)
+    except Exception:                                     # noqa: BLE001
+        out["replication_config"] = {}
     return out
 
 

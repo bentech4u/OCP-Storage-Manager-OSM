@@ -7,12 +7,19 @@
 {% if error %}<div class="banner bad"><span>⚠</span><div>{{ error }}</div></div>{% endif %}
 
 <div class="steps">
-  <div class="step {{ 'done' if tools.repctl.found else 'todo' }}"><span class="n">1</span> Tools</div>
-  <div class="step {{ 'done' if clusters else 'todo' }}"><span class="n">2</span> Clusters</div>
-  <div class="step {{ 'done' if arrays else 'todo' }}"><span class="n">3</span> Arrays</div>
-  <div class="step {{ 'done' if state.installs else 'todo' }}"><span class="n">4</span> Driver</div>
-  <div class="step todo"><span class="n">5</span> Storage classes</div>
-  <div class="step todo"><span class="n">6</span> Replication</div>
+  <a class="step {{ 'done' if step_done.tools else 'todo' }}" href="#tools"><span class="n">1</span> Tools</a>
+  <a class="step {{ 'done' if step_done.clusters else 'todo' }}" href="#clusters"><span class="n">2</span> Clusters</a>
+  <a class="step {{ 'done' if step_done.arrays else 'todo' }}" href="#arrays"><span class="n">3</span> Arrays</a>
+  <a class="step {{ 'done' if step_done.driver else 'todo' }}" href="#driver"><span class="n">4</span> Driver</a>
+  <a class="step {{ 'done' if step_done.storage_classes else 'todo' }}" href="#storageclass"><span class="n">5</span> Storage classes</a>
+  <a class="step {{ 'done' if step_done.replication else 'todo' }}" href="#replication"><span class="n">6</span> Replication</a>
+</div>
+
+<div class="banner" style="align-items:center">
+  <span>→</span>
+  <div><strong>Next</strong> <span class="muted">{{ next_step.text }}</span></div>
+  <div class="spacer"></div>
+  <a class="btn sm" href="{{ next_step.where }}">{{ next_step.label }}</a>
 </div>
 
 <div id="output"></div>
