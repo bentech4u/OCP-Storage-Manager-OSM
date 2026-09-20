@@ -264,6 +264,23 @@ async def delete_array(request: Request, aid: str):
     return _page(request, notice=f"Array {aid} removed from the console.")
 
 
+@router.get("/install/driver/status", response_class=HTMLResponse)
+async def driver_status_partial(request: Request, cluster_id: str = ""):
+    """What is actually running on the selected cluster, shown next to the install form."""
+    state = store.load()
+    cluster = state["clusters"].get(cluster_id) or next(iter(state["clusters"].values()), None)
+    if not cluster:
+        return HTMLResponse('<div class="banner"><span>•</span><div>Add a cluster first.</div></div>')
+    ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+    try:
+        status = k8s.driver_status(cluster["kubeconfig"], ns)
+    except k8s.ClusterError as exc:
+        status = {"error": str(exc)[:200], "pods": [], "namespace": ns}
+    return templates.TemplateResponse(request, "partials/driver_status.html", {
+        "cluster": cluster, "status": status, "install": state["installs"].get(cluster["id"]),
+    })
+
+
 # --- driver install ------------------------------------------------------------
 def _opts(form: dict) -> dict:
     return {

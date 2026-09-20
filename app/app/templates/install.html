@@ -251,6 +251,8 @@
           <div class="title">With replication</div>
           <div class="desc">Adds the replicator sidecar and the replication custom resource definitions.</div></label>
       </div>
+      <div id="driver-status" hx-get="/install/driver/status" hx-include="[name='cluster_id']"
+           hx-trigger="load, change from:[name='cluster_id'], every 20s"></div>
       <div class="row three">
         <div class="field"><label>Cluster</label>
           <select name="cluster_id" required>

@@ -1,0 +1,56 @@
+<div class="banner {{ 'ok' if status.controller_ready and status.node_ready else ('warn' if status.pods else '') }}"
+     style="margin:.2rem 0 1rem">
+  <span>{{ "✓" if status.controller_ready and status.node_ready else ("…" if status.pods else "•") }}</span>
+  <div style="flex:1">
+    <strong>{{ cluster.id }}</strong>
+    {% if status.error %}
+      <span class="pill bad"><span class="dot"></span>unreachable</span>
+      <div class="small muted">{{ status.error }}</div>
+    {% elif not status.pods %}
+      <span class="pill mute"><span class="dot"></span>no driver in {{ status.namespace }}</span>
+      <div class="small muted">Nothing is installed in this namespace yet.</div>
+    {% else %}
+      {% if status.controller_ready and status.node_ready %}
+        <span class="pill ok"><span class="dot"></span>running</span>
+      {% else %}
+        <span class="pill warn"><span class="dot"></span>starting</span>
+      {% endif %}
+      {% if install %}<span class="pill info">{{ install.method }}, {{ install.mode }}</span>{% endif %}
+      <div class="small muted">
+        {{ status.pods|length }} pod(s) in {{ status.namespace }}:
+        {{ status.pods|selectattr('all_ready')|list|length }} ready,
+        {{ status.pods|rejectattr('all_ready')|list|length }} not ready
+        {% if status.csidriver %} &middot; CSI driver registered{% endif %}
+        {% if status.replication_crds %} &middot; replication definitions present{% endif %}
+        {% if status.replication_controller %} &middot; replication controller running{% endif %}
+      </div>
+      {% if status.storage_classes %}
+      <div class="small muted">storage classes:
+        {% for sc in status.storage_classes %}{{ sc.name }}{% if sc.replicated %} (replicated,
+          {{ sc.rpo }} to {{ sc.remote_cluster }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
+      </div>
+      {% endif %}
+    {% endif %}
+  </div>
+  <button class="btn sm ghost" hx-get="/install/driver/status" hx-include="[name='cluster_id']"
+          hx-target="#driver-status" title="check again">↻</button>
+</div>
+{% if status.pods %}
+<details class="fold" style="margin:-.4rem 0 1rem;border:0;padding-top:0">
+  <summary><span class="chev">▸</span> Pods <span class="muted small">on {{ cluster.id }}</span></summary>
+  <table>
+    <thead><tr><th>Pod</th><th>Ready</th><th>Status</th><th>Restarts</th><th>Node</th></tr></thead>
+    <tbody>
+      {% for p in status.pods %}
+      <tr>
+        <td class="small">{{ p.name }}</td>
+        <td><span class="pill {{ 'ok' if p.all_ready else 'warn' }}">{{ p.ready }}</span></td>
+        <td class="small">{{ p.phase }}</td>
+        <td class="small num">{{ p.restarts }}</td>
+        <td class="small muted">{{ p.node }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}

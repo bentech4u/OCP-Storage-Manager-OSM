@@ -378,10 +378,14 @@ def driver_status(kubeconfig: str | Path, namespace: str) -> dict:
         out["error"] = str(exc)
         return out
     for p in pods:
+        name = p["metadata"]["name"]
+        # only the driver's own pods; anything else in the namespace is the user's
+        if "-controller-" not in name and "-node-" not in name:
+            continue
         statuses = p.get("status", {}).get("containerStatuses") or []
         ready = sum(1 for c in statuses if c.get("ready"))
         out["pods"].append({
-            "name": p["metadata"]["name"],
+            "name": name,
             "phase": p.get("status", {}).get("phase", ""),
             "ready": f"{ready}/{len(statuses)}" if statuses else "0/0",
             "restarts": sum(c.get("restartCount", 0) for c in statuses),
