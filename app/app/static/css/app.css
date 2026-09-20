@@ -318,3 +318,6 @@ a.step:hover { border-color: var(--brand); text-decoration: none; }
 .rg-arrow-label { margin-top: .45rem; }
 @media (prefers-reduced-motion: reduce) { .rg-dot { animation: none; opacity: .6; } }
 @media (max-width: 900px) { .rg-flow { grid-template-columns: 1fr; } .rg-line { display: none; } }
+
+.rg-updated { display: flex; align-items: center; justify-content: flex-end; gap: .4rem;
+  padding: .1rem 1.1rem .2rem; }

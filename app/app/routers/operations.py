@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 
 from .. import store
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 from ..services import inventory, k8s, replication
 from ..services.arrays import ArrayError, OneFS
@@ -74,6 +75,7 @@ async def operations_page(request: Request, job: str = ""):
         "clusters": list(state["clusters"].values()),
         "arrays": data["arrays"], "jobs": recent(25),
         "actions": replication.ACTIONS,
+        "updated": datetime.now().strftime("%H:%M:%S"),
         "selected_job": get_job(job).snapshot() if get_job(job) else None,
         "repctl_ready": data["tools"]["repctl"]["found"],
     })
@@ -84,7 +86,7 @@ async def groups_partial(request: Request):
     state = store.load()
     return templates.TemplateResponse(request, "partials/groups.html", {
         "groups": _groups(), "clusters": list(state["clusters"].values()),
-        "actions": replication.ACTIONS,
+        "actions": replication.ACTIONS, "updated": datetime.now().strftime("%H:%M:%S"),
     })
 
 
