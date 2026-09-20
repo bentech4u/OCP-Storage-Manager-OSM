@@ -481,17 +481,36 @@ async def replication_setup(request: Request, source_cluster: str = Form(...),
 
     def work(job: Job):
         job.log("step 1: replication controller on both clusters")
-        installer.helm_install_replication_controller(job, src["kubeconfig"], src["id"], [tgt["id"]])
-        installer.helm_install_replication_controller(job, tgt["kubeconfig"], tgt["id"], [src["id"]])
+        for site, peer in ((src, tgt), (tgt, src)):
+            state_now = installer.replication_controller_state(site["kubeconfig"])
+            if state_now["present"]:
+                job.log(f"  {site['id']}: controller already present, managed by "
+                        f"{state_now['managed_by']}")
+            installer.helm_install_replication_controller(job, site["kubeconfig"], site["id"],
+                                                          [peer["id"]])
         job.log("step 2: register both clusters with repctl")
         replication.add_clusters(job, [src, tgt])
         job.log("step 3: inject each cluster's config into the other")
-        rc = replication.inject(job, [src["id"], tgt["id"]], use_sa=(use_sa == "on"))
+        rc = replication.inject(job, [src["id"], tgt["id"]], use_sa=(use_sa == "on"),
+                                kubeconfigs={src["id"]: src["kubeconfig"],
+                                             tgt["id"]: tgt["kubeconfig"]})
         if rc != 0:
             job.log("inject reported a problem; check the output above")
-        job.log("step 4: confirm the controllers see their peer")
-        replication.configure_controller(job, src["kubeconfig"], src["id"], [tgt["id"]])
-        replication.configure_controller(job, tgt["kubeconfig"], tgt["id"], [src["id"]])
+        job.log("step 4: point each controller at its peer")
+        for site, peer in ((src, tgt), (tgt, src)):
+            replication.configure_controller(
+                job, site["kubeconfig"], site["id"],
+                [{"clusterId": peer["id"], "address": peer.get("server", ""),
+                  "secretRef": peer["id"]}])
+        job.log("step 5: check the configuration stuck")
+        for site, peer in ((src, tgt), (tgt, src)):
+            settled = replication.controller_config(site["kubeconfig"])
+            job.log(f"  {site['id']}: clusterId={settled.get('clusterId') or 'empty'} "
+                    f"targets={[t.get('clusterId') for t in settled.get('targets') or []]}")
+            if not settled.get("clusterId"):
+                job.log(f"  {site['id']}: the operator reconciled the config map back to empty; "
+                        f"set TARGET_CLUSTERS_IDS to {peer['id']} on the "
+                        "ContainerStorageModule instead")
         inventory.invalidate()
 
     job = start(f"Wire replication {source_cluster} to {target_cluster}", "replication", work,

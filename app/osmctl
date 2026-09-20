@@ -323,9 +323,18 @@ def cmd_repctl_setup(args) -> None:
         installer.helm_install_replication_controller(job, src["kubeconfig"], src["id"], [tgt["id"]])
         installer.helm_install_replication_controller(job, tgt["kubeconfig"], tgt["id"], [src["id"]])
         replication.add_clusters(job, [src, tgt])
-        replication.inject(job, [src["id"], tgt["id"]], use_sa=not args.admin_configs)
-        replication.configure_controller(job, src["kubeconfig"], src["id"], [tgt["id"]])
-        replication.configure_controller(job, tgt["kubeconfig"], tgt["id"], [src["id"]])
+        replication.inject(job, [src["id"], tgt["id"]], use_sa=not args.admin_configs,
+                           kubeconfigs={src["id"]: src["kubeconfig"],
+                                        tgt["id"]: tgt["kubeconfig"]})
+        for site, peer in ((src, tgt), (tgt, src)):
+            replication.configure_controller(
+                job, site["kubeconfig"], site["id"],
+                [{"clusterId": peer["id"], "address": peer.get("server", ""),
+                  "secretRef": peer["id"]}])
+        for site, peer in ((src, tgt), (tgt, src)):
+            settled = replication.controller_config(site["kubeconfig"])
+            print(f"  {site['id']}: clusterId={settled.get('clusterId') or 'empty'} "
+                  f"targets={[t.get('clusterId') for t in settled.get('targets') or []]}")
         inventory.invalidate()
 
     job = run_sync(f"wire replication {args.source} to {args.target}", "replication", work)

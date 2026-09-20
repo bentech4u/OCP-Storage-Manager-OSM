@@ -201,17 +201,56 @@ def helm_uninstall_driver(job: Job, kubeconfig: str, ns: str) -> None:
         raise ClusterError(f"helm uninstall exited {rc}")
 
 
+REPLICATION_NS = "dell-replication-controller"
+
+
+def replication_controller_state(kubeconfig: str) -> dict:
+    """Is a replication controller already running, and who put it there?
+
+    The CSM Operator installs its own copy, which carries none of Helm's ownership
+    labels, so a Helm install would refuse to adopt it. Knowing the owner lets the
+    wiring step leave an operator-managed controller alone.
+    """
+    state = {"present": False, "managed_by": "", "release": ""}
+    try:
+        deploy = run_json(kubeconfig, ["-n", REPLICATION_NS, "get", "deploy",
+                                       "dell-replication-controller-manager"], timeout=60)
+    except ClusterError:
+        return state
+    state["present"] = True
+    meta = deploy.get("metadata", {})
+    labels = meta.get("labels", {}) or {}
+    annotations = meta.get("annotations", {}) or {}
+    if labels.get("app.kubernetes.io/managed-by") == "Helm":
+        state["managed_by"] = "helm"
+        state["release"] = annotations.get("meta.helm.sh/release-name", "")
+    else:
+        state["managed_by"] = "operator"
+    return state
+
+
 def helm_install_replication_controller(job: Job, kubeconfig: str, cluster_id: str,
                                         targets: list[str]) -> None:
     """dell-replication-controller, one per cluster, aware of its own id and its peers."""
+    ns = REPLICATION_NS
+    install_replication_crds(job, kubeconfig)
+
+    existing = replication_controller_state(kubeconfig)
+    if existing["present"] and existing["managed_by"] == "operator":
+        job.log(f"{cluster_id}: a replication controller is already running and the CSM Operator "
+                "manages it, so the chart is skipped; only its configuration is set here")
+        return
+    if existing["present"] and existing["managed_by"] == "helm":
+        job.log(f"{cluster_id}: upgrading the existing helm release "
+                f"{existing['release'] or 'replication'}")
+
     if not REPLICATION_CHART.exists():
         raise ClusterError(f"the csm-replication chart is missing at {REPLICATION_CHART}")
-    ns = "dell-replication-controller"
-    install_replication_crds(job, kubeconfig)
     ensure_namespace(job, kubeconfig, ns)
     env = tool_env()
     env["KUBECONFIG"] = kubeconfig
-    cmd = [helm(), "upgrade", "--install", "replication", str(REPLICATION_CHART),
+    release = existing["release"] or "replication"
+    cmd = [helm(), "upgrade", "--install", release, str(REPLICATION_CHART),
            "-n", ns, "--wait", "--timeout", "5m"]
     rc = job.run(cmd, env=env)
     if rc != 0:

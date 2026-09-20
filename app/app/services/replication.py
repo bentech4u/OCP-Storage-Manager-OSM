@@ -1,14 +1,17 @@
 """repctl wrappers: register clusters, inject configs, and run failover actions."""
 from __future__ import annotations
 
+import base64
+import json
 import os
 import shutil
+import time
 import subprocess
 from pathlib import Path
 
 import yaml
 
-from ..config import DATA_DIR, ROOT, tool_env
+from ..config import DATA_DIR, ROOT, match_owner, tool_env
 from .jobs import Job
 from .k8s import ClusterError, run, run_json
 from .tools import which
@@ -122,36 +125,170 @@ def list_clusters() -> dict:
     return out
 
 
-def inject(job: Job, cluster_ids: list[str], use_sa: bool = True) -> int:
-    """Push each cluster's kubeconfig into the other's replication controller namespace."""
-    args = ["cluster", "inject"]
-    for cid in cluster_ids:
-        args += ["-c", cid]
+SA_TOKEN_SECRET = "replication-secret"
+CONTROLLER_SA = "dell-replication-controller-sa"
+
+
+def ensure_sa_token(job: Job, kubeconfig: str, cluster_id: str) -> bool:
+    """Make sure the controller's service account has a usable, listed token secret.
+
+    repctl reads the token from the secrets the service account lists as mountable.
+    The Helm chart ships such a secret; the CSM Operator does not, and Kubernetes has
+    not created them automatically since 1.24, so it is created here when missing.
+    """
+    have = run(kubeconfig, ["-n", CONTROLLER_NS, "get", "secret", SA_TOKEN_SECRET]).returncode == 0
+    if not have:
+        manifest = yaml.safe_dump({
+            "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/service-account-token",
+            "metadata": {"name": SA_TOKEN_SECRET, "namespace": CONTROLLER_NS,
+                         "annotations": {"kubernetes.io/service-account.name": CONTROLLER_SA}},
+        })
+        job.log(f"  {cluster_id}: creating the token secret {SA_TOKEN_SECRET}")
+        proc = run(kubeconfig, ["apply", "-f", "-"], stdin_text=manifest, timeout=60)
+        if proc.returncode != 0:
+            job.log(f"  {cluster_id}: could not create it: "
+                    f"{(proc.stderr or proc.stdout).strip()[:160]}")
+            return False
+    # repctl looks at the account's mountable secrets, so the secret has to be listed there
+    patch = json.dumps({"secrets": [{"name": SA_TOKEN_SECRET}]})
+    run(kubeconfig, ["-n", CONTROLLER_NS, "patch", "sa", CONTROLLER_SA, "-p", patch], timeout=60)
+    for _ in range(15):
+        try:
+            secret = run_json(kubeconfig, ["-n", CONTROLLER_NS, "get", "secret", SA_TOKEN_SECRET])
+        except ClusterError:
+            secret = {}
+        if (secret.get("data") or {}).get("token"):
+            return True
+        time.sleep(2)
+    job.log(f"  {cluster_id}: the token secret never filled in")
+    return False
+
+
+def sa_kubeconfig(job: Job, kubeconfig: str, cluster_id: str) -> str | None:
+    """Build a kubeconfig for the controller's own service account.
+
+    repctl's --use-sa asks kubectl to describe the account and greps for a
+    "Mountable secrets" line, which Kubernetes 1.35 no longer prints, so its own
+    generation fails. Reading the token secret directly gives the same result, and the
+    file is then handed to repctl as a custom configuration.
+    """
+    if not ensure_sa_token(job, kubeconfig, cluster_id):
+        return None
+    try:
+        secret = run_json(kubeconfig, ["-n", CONTROLLER_NS, "get", "secret", SA_TOKEN_SECRET])
+    except ClusterError as exc:
+        job.log(f"  {cluster_id}: cannot read the token secret: {exc}")
+        return None
+    data = secret.get("data", {})
+    if not data.get("token"):
+        return None
+    token = base64.b64decode(data["token"]).decode()
+    server = run(kubeconfig, ["config", "view", "--minify", "--raw", "-o",
+                              "jsonpath={.clusters[0].cluster.server}"]).stdout.strip()
+    cluster_entry: dict = {"server": server}
+    if data.get("ca.crt"):
+        cluster_entry["certificate-authority-data"] = data["ca.crt"]
+    else:
+        cluster_entry["insecure-skip-tls-verify"] = True
+    cfg = {
+        "apiVersion": "v1", "kind": "Config", "preferences": {},
+        "clusters": [{"name": cluster_id, "cluster": cluster_entry}],
+        "users": [{"name": CONTROLLER_SA, "user": {"token": token}}],
+        "contexts": [{"name": cluster_id, "context": {"cluster": cluster_id,
+                                                      "user": CONTROLLER_SA,
+                                                      "namespace": CONTROLLER_NS}}],
+        "current-context": cluster_id,
+    }
+    out_dir = DATA_DIR / "repctl-sa"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(out_dir, 0o700)
+    path = out_dir / cluster_id
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    os.chmod(path, 0o600)
+    match_owner(path)
+    job.log(f"  {cluster_id}: built a kubeconfig for {CONTROLLER_SA}")
+    return str(path)
+
+
+def inject(job: Job, cluster_ids: list[str], use_sa: bool = True,
+           kubeconfigs: dict[str, str] | None = None) -> int:
+    """Push each cluster's configuration into the other's replication namespace.
+
+    repctl injects for every cluster it manages, narrowed by the global --clusters flag.
+    """
+    args = ["--clusters", ",".join(cluster_ids), "cluster", "inject"]
     if use_sa:
-        args.append("--use-sa")
+        paths = []
+        for cid in cluster_ids:
+            kubeconfig = (kubeconfigs or {}).get(cid)
+            built = sa_kubeconfig(job, kubeconfig, cid) if kubeconfig else None
+            if built:
+                paths.append(built)
+        if len(paths) == len(cluster_ids):
+            args += ["--custom-configs", ",".join(paths)]
+        else:
+            job.log("  could not build service account configurations for every cluster, so the "
+                    "admin ones are injected instead, which Dell calls the less secure option")
     job.log("injecting cluster configs so each replication controller can reach its peer")
-    return run_repctl(job, args)
+    rc = run_repctl(job, args)
+    if rc != 0 and use_sa:
+        job.log("  that failed; retrying with the admin configurations")
+        rc = run_repctl(job, ["--clusters", ",".join(cluster_ids), "cluster", "inject"])
+    return rc
 
 
-def configure_controller(job: Job, kubeconfig: str, cluster_id: str, targets: list[str]) -> None:
-    """The controller reads its own id and its peers from a ConfigMap."""
+def configure_controller(job: Job, kubeconfig: str, cluster_id: str,
+                         targets: list[dict]) -> None:
+    """Set the controller's own id and its peers, keeping what repctl wrote.
+
+    repctl's injection fills each target's address and secret reference. Rewriting the
+    config map from scratch would drop those, and the controller then logs
+    'Secret "" not found', so the existing entries are merged rather than replaced.
+    """
+    current = controller_config(kubeconfig)
+    existing = {t.get("clusterId"): dict(t) for t in (current.get("targets") or [])
+                if isinstance(t, dict)}
+    merged = []
+    for wanted in targets:
+        cid = wanted["clusterId"]
+        entry = existing.get(cid, {})
+        entry["clusterId"] = cid
+        if wanted.get("address"):
+            entry.setdefault("address", wanted["address"])
+        if wanted.get("secretRef"):
+            entry.setdefault("secretRef", wanted["secretRef"])
+        merged.append(entry)
+    config = {"clusterId": cluster_id, "targets": merged}
+    if current.get("CSI_LOG_LEVEL"):
+        config["CSI_LOG_LEVEL"] = current["CSI_LOG_LEVEL"]
     cm = {
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "dell-replication-controller-config", "namespace": CONTROLLER_NS},
-        "data": {"config.yaml": yaml.safe_dump(
-            {"clusterId": cluster_id, "targets": [{"clusterId": t} for t in targets]},
-            sort_keys=False)},
+        "data": {"config.yaml": yaml.safe_dump(config, sort_keys=False)},
     }
-    job.log(f"setting clusterId={cluster_id} targets={targets} on {cluster_id}")
+    job.log(f"  {cluster_id}: clusterId={cluster_id} targets="
+            f"{[(t['clusterId'], t.get('secretRef', '-')) for t in merged]}")
     proc = run(kubeconfig, ["apply", "-f", "-"], stdin_text=yaml.safe_dump(cm), timeout=60)
-    job.log((proc.stdout or "") + (proc.stderr or ""))
     if proc.returncode != 0:
-        raise ClusterError("could not write the replication controller config")
+        raise ClusterError("could not write the replication controller config: "
+                           + (proc.stderr or proc.stdout).strip()[:200])
     run(kubeconfig, ["-n", CONTROLLER_NS, "rollout", "restart", "deployment",
                      "dell-replication-controller-manager"], timeout=60)
 
 
-# --- replication groups --------------------------------------------------------
+def controller_config(kubeconfig: str) -> dict:
+    """Read back what the replication controller is actually configured with."""
+    try:
+        cm = run_json(kubeconfig, ["-n", CONTROLLER_NS, "get", "cm",
+                                   "dell-replication-controller-config"], timeout=60)
+    except ClusterError:
+        return {}
+    try:
+        return yaml.safe_load(cm.get("data", {}).get("config.yaml", "")) or {}
+    except yaml.YAMLError:
+        return {}
+
+
 def replication_groups(kubeconfig: str) -> list[dict]:
     from .k8s import summarize_rg
     try:

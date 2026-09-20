@@ -1,0 +1,63 @@
+[2026-09-20 21:15:23]  INFO Adding clusters
+[2026-09-20 21:15:23]  INFO homelab
+[2026-09-20 21:15:23]  INFO Successfully created homelab in /opt/ocpstorage/.repctl/clusters folder. 11266 bytes copied
+[2026-09-20 21:15:23]  INFO drhomelab
+[2026-09-20 21:15:23]  INFO Successfully created drhomelab in /opt/ocpstorage/.repctl/clusters folder. 11284 bytes copied
+[2026-09-20 21:15:23] FATAL repctl: error: unknown shorthand flag: 'c' in -c
+
+[2026-09-20 21:16:04]  INFO Adding clusters
+[2026-09-20 21:16:04]  INFO homelab
+[2026-09-20 21:16:04]  INFO Successfully created homelab in /opt/ocpstorage/.repctl/clusters folder. 11266 bytes copied
+[2026-09-20 21:16:04]  INFO drhomelab
+[2026-09-20 21:16:04]  INFO Successfully created drhomelab in /opt/ocpstorage/.repctl/clusters folder. 11284 bytes copied
+[2026-09-20 21:16:05]  INFO Generating config maps from existing service accounts
+[2026-09-20 21:16:05]  INFO Generating config for service account in drhomelab cluster
+[2026-09-20 21:16:05]  INFO 
+[2026-09-20 21:16:05]  INFO Generating config for service account in homelab cluster
+[2026-09-20 21:16:05]  INFO 
+[2026-09-20 21:16:05]  INFO Custom configs provided, injecting them into clusters
+[2026-09-20 21:16:05] FATAL cluster inject: error checking cfg /tmp/repctl/drhomelab: stat /tmp/repctl/drhomelab: no such file or directory
+[2026-09-20 21:16:05]  INFO Injecting current cluster configuration to all clusters
+[2026-09-20 21:16:05]  INFO Creating/Updating homelab secret in drhomelab cluster 
+[2026-09-20 21:16:05]  INFO secret homelab created 
+[2026-09-20 21:16:05]  INFO Creating/Updating replication config map in drhomelab cluster 
+[2026-09-20 21:16:05]  INFO config map dell-replication-controller-config created 
+[2026-09-20 21:16:05]  INFO Creating/Updating drhomelab secret in homelab cluster 
+[2026-09-20 21:16:05]  INFO secret drhomelab created 
+[2026-09-20 21:16:05]  INFO Creating/Updating replication config map in homelab cluster 
+[2026-09-20 21:16:05]  INFO config map dell-replication-controller-config created 
+[2026-09-20 21:16:38]  INFO Generating config maps from existing service accounts
+[2026-09-20 21:16:38]  INFO Generating config for service account in drhomelab cluster
+[2026-09-20 21:16:38]  INFO 
+[2026-09-20 21:16:38]  INFO Generating config for service account in homelab cluster
+[2026-09-20 21:16:38]  INFO 
+[2026-09-20 21:16:38]  INFO Custom configs provided, injecting them into clusters
+[2026-09-20 21:16:38] FATAL cluster inject: error checking cfg /tmp/repctl/drhomelab: stat /tmp/repctl/drhomelab: no such file or directory
+[2026-09-20 21:17:29]  INFO Adding clusters
+[2026-09-20 21:17:29]  INFO homelab
+[2026-09-20 21:17:29]  INFO Successfully created homelab in /opt/ocpstorage/.repctl/clusters folder. 11266 bytes copied
+[2026-09-20 21:17:29]  INFO drhomelab
+[2026-09-20 21:17:29]  INFO Successfully created drhomelab in /opt/ocpstorage/.repctl/clusters folder. 11284 bytes copied
+[2026-09-20 21:17:31]  INFO Custom configs provided, injecting them into clusters
+[2026-09-20 21:17:31]  INFO Creating/Updating homelab secret in drhomelab cluster 
+[2026-09-20 21:17:31]  INFO secret homelab created 
+[2026-09-20 21:17:31]  INFO Creating/Updating replication config map in drhomelab cluster 
+[2026-09-20 21:17:31]  INFO config map dell-replication-controller-config created 
+[2026-09-20 21:17:31]  INFO Creating/Updating drhomelab secret in homelab cluster 
+[2026-09-20 21:17:31]  INFO secret drhomelab created 
+[2026-09-20 21:17:31]  INFO Creating/Updating replication config map in homelab cluster 
+[2026-09-20 21:17:31]  INFO config map dell-replication-controller-config created 
+[2026-09-20 21:18:39]  INFO Adding clusters
+[2026-09-20 21:18:39]  INFO homelab
+[2026-09-20 21:18:39]  INFO Successfully created homelab in /opt/ocpstorage/.repctl/clusters folder. 11266 bytes copied
+[2026-09-20 21:18:39]  INFO drhomelab
+[2026-09-20 21:18:39]  INFO Successfully created drhomelab in /opt/ocpstorage/.repctl/clusters folder. 11284 bytes copied
+[2026-09-20 21:18:41]  INFO Custom configs provided, injecting them into clusters
+[2026-09-20 21:18:41]  INFO Creating/Updating homelab secret in drhomelab cluster 
+[2026-09-20 21:18:41]  INFO secret homelab created 
+[2026-09-20 21:18:41]  INFO Creating/Updating replication config map in drhomelab cluster 
+[2026-09-20 21:18:41]  INFO config map dell-replication-controller-config created 
+[2026-09-20 21:18:41]  INFO Creating/Updating drhomelab secret in homelab cluster 
+[2026-09-20 21:18:41]  INFO secret drhomelab created 
+[2026-09-20 21:18:41]  INFO Creating/Updating replication config map in homelab cluster 
+[2026-09-20 21:18:41]  INFO config map dell-replication-controller-config created 
