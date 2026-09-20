@@ -64,10 +64,17 @@
     <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=reprotect"
       hx-target="#output">Reprotect</button>
     <div class="spacer"></div>
-    <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=failover"
-      hx-target="#output">Failover</button>
+    {% if g.failed_over %}
+    <button class="btn sm danger" disabled
+      title="The pair is already failed over. Reprotect to settle it, or Failback to undo.">Failover</button>
     <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=failback"
-      hx-target="#output">Failback</button>
+      hx-target="#output" title="Undo the failover and return service to the site that had it">Failback</button>
+    {% else %}
+    <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=failover"
+      hx-target="#output" title="Move service to the other site">Failover</button>
+    <button class="btn sm danger" disabled
+      title="Failback only applies straight after a failover, before reprotect. To move service back now, use Failover and pick the other cluster.">Failback</button>
+    {% endif %}
   </div>
 </div>
 {% else %}

@@ -324,13 +324,15 @@ ACTIONS = {
     "failover": {
         "verb": ["failover"], "flag": "--target", "needs_target": True,
         "label": "Failover",
-        "help": "Promote the target site. Planned by default; tick unplanned when the source is gone.",
+        "help": "Move service to the other site. Planned by default; tick unplanned when the "
+                "current source is unreachable. Quiesce writers first, then reprotect afterwards.",
         "danger": True,
     },
     "failback": {
         "verb": ["failback"], "flag": "--target", "needs_target": True,
         "label": "Failback",
-        "help": "Return to the original source once it is healthy again.",
+        "help": "Undo a failover, before reprotect, returning service to the site that had it. "
+                "Once a pair has been reprotected, move service with Failover instead.",
         "danger": True,
     },
     "reprotect": {
