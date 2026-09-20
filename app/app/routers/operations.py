@@ -127,13 +127,15 @@ async def run_action(request: Request, rg: str = Form(...), action: str = Form(.
     preview = replication.action_preview(rg, action, target or None,
                                          unplanned == "on", discard == "on")
 
+    kubeconfig = (store.load()["clusters"].get(cluster) or {}).get("kubeconfig")
+
     def work(job: Job):
         job.log(f"replication group {rg} on cluster {cluster or 'unknown'}")
         job.log(f"command: {preview}")
         rc = replication.act(job, rg, action, target or None,
-                             unplanned == "on", discard == "on")
+                             unplanned == "on", discard == "on", kubeconfig=kubeconfig)
         if rc != 0:
-            raise RuntimeError(f"repctl exited {rc}")
+            raise RuntimeError("the action did not complete; see the output above")
         inventory.invalidate()
 
     job = start(f"{action} {rg}", "replication-action", work, cluster=cluster or None)

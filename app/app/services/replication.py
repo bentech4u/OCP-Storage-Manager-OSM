@@ -374,12 +374,96 @@ def build_args(rg: str, action: str, target_cluster: str | None = None,
     return args
 
 
+def rg_state(kubeconfig: str, rg: str) -> dict:
+    """The group's current action and link state, as the cluster reports them."""
+    try:
+        obj = run_json(kubeconfig, ["get", "dellcsireplicationgroup", rg], timeout=60)
+    except ClusterError as exc:
+        return {"error": str(exc)[:160]}
+    status = obj.get("status", {}) or {}
+    link = status.get("replicationLinkState", {}) or {}
+    pending = (obj.get("spec", {}) or {}).get("action") or ""
+    annotation = (obj["metadata"].get("annotations") or {}).get("Action", "")
+    current, completed, failure = "", True, ""
+    if annotation:
+        try:
+            parsed = json.loads(annotation)
+            current = parsed.get("name", "")
+            completed = bool(parsed.get("completed"))
+            failure = parsed.get("finalError", "")
+        except json.JSONDecodeError:
+            pass
+    return {"pending": pending, "action": current, "completed": completed, "error": failure,
+            "state": status.get("state", ""), "link": link.get("state", ""),
+            "is_source": link.get("isSource")}
+
+
+def busy(kubeconfig: str, rg: str) -> str:
+    """Name of an action still running on this group, or an empty string."""
+    now = rg_state(kubeconfig, rg)
+    if now.get("pending"):
+        return now["pending"]
+    if now.get("action") and not now.get("completed"):
+        return now["action"]
+    if "IN_PROGRESS" in (now.get("state") or ""):
+        return now["state"]
+    return ""
+
+
+# what each button leaves in the group's action annotation once the driver ran it
+EXPECTED_ANNOTATION = {
+    "failover": ("FAILOVER_REMOTE", "UNPLANNED_FAILOVER_LOCAL"),
+    "failback": ("FAILBACK_LOCAL", "ACTION_FAILBACK_DISCARD_CHANGES_LOCAL"),
+    "reprotect": ("REPROTECT_LOCAL",),
+    "suspend": ("SUSPEND",), "resume": ("RESUME",), "sync": ("SYNC",),
+}
+
+
 def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
-        unplanned: bool = False, discard: bool = False) -> int:
-    """Run one repctl action against a replication group."""
+        unplanned: bool = False, discard: bool = False,
+        kubeconfig: str | None = None, wait: int = 300) -> int:
+    """Run one repctl action and, when possible, wait for the cluster to finish it.
+
+    repctl returns as soon as it has written the request onto the group, so a job that
+    ended there looked successful even when the action was never carried out. Worse,
+    a request written while another action is running is simply lost, so this refuses
+    to start one on a busy group.
+    """
+    if kubeconfig:
+        running = busy(kubeconfig, rg)
+        if running:
+            raise ClusterError(
+                f"{rg} is still running {running}. Actions are written onto the group one at a "
+                "time, and a second one issued now would be dropped. Wait for it to finish.")
+
     args = build_args(rg, action, target_cluster, unplanned, discard)
     job.log("repctl " + " ".join(args))
-    return run_repctl(job, args)
+    rc = run_repctl(job, args)
+    if rc != 0 or not kubeconfig:
+        return rc
+
+    job.log("waiting for the cluster to carry it out")
+    last = ""
+    for _ in range(max(1, wait // 5)):
+        time.sleep(5)
+        now = rg_state(kubeconfig, rg)
+        line = (f"  state={now.get('state','?')} link={now.get('link','?')} "
+                f"source={now.get('is_source')} action={now.get('action','-')}"
+                f"{'' if now.get('completed') else ' (running)'}")
+        if line != last:
+            job.log(line)
+            last = line
+        expected = EXPECTED_ANNOTATION.get(action, ())
+        arrived = now.get("action") in expected if expected else True
+        if arrived and now.get("error"):
+            job.log(f"  the cluster reported: {now['error']}")
+            return 1
+        if (arrived and not now.get("pending") and now.get("completed")
+                and "IN_PROGRESS" not in (now.get("state") or "")):
+            job.log("action finished")
+            return 0
+    job.log("still running after the wait; check the group on the Operations page")
+    return 0
 
 
 def action_preview(rg: str, action: str, target_cluster: str | None = None,

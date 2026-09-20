@@ -56,6 +56,19 @@
     if (choice) other.value = choice.value;
   });
 
+  // Browsers pause timers in a background tab, so refresh whatever polls as soon as
+  // the page is looked at again.
+  function refreshLivePanels() {
+    document.querySelectorAll("[data-refresh-on-job]").forEach(function (el) {
+      if (window.htmx) window.htmx.trigger(el, "refresh");
+    });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") refreshLivePanels();
+  });
+  window.addEventListener("focus", refreshLivePanels);
+  window.addEventListener("pageshow", function (e) { if (e.persisted) refreshLivePanels(); });
+
   // Refresh panels that ask for it when a job ends.
   document.body.addEventListener("job-finished", function () {
     document.querySelectorAll("[data-refresh-on-job]").forEach(function (el) {
