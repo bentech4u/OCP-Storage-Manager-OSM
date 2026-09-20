@@ -158,6 +158,25 @@ that path. Clusters registered in the web pages are visible to `repctl` run by h
 other way round. Installing repctl also links it into `/usr/local/bin`, so plain `repctl cluster
 get` works from any shell.
 
+## Who can sign in
+
+The login page offers a list: **Local account**, and **Microsoft Entra ID** once single sign-on is
+configured. Both take a user and a password.
+
+* **Local** is one account, `admin`, held as a bcrypt hash. It is the way back in when the provider
+  is unreachable, so Setup can limit it to the installer host or switch it off, and
+  `osmctl admin local-login always` restores it from the shell whatever the setting.
+* **Entra** signs in against the provider's token endpoint. Microsoft allows that only for cloud
+  accounts without multi-factor or conditional access; where those apply, the login page also offers
+  **Sign in on the Microsoft page**, the ordinary redirect flow, which needs the redirect address
+  registered on the application.
+* **Groups decide what an account may do.** One list grants full control, another grants read-only.
+  Read-only accounts see every page, and any attempt to change something is refused. With both lists
+  empty, anyone in the directory gets full control.
+
+The top bar names the account and how it signed in, and every job records both, so the job history
+answers who failed a group over rather than only that it happened.
+
 ## Starting over
 
 Setup has a **Start over** panel. Clearing the inventory removes clusters, arrays, stored

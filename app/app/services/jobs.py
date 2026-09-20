@@ -24,11 +24,14 @@ def _now() -> str:
 
 
 class Job:
-    def __init__(self, title: str, kind: str, cluster: str | None = None):
+    def __init__(self, title: str, kind: str, cluster: str | None = None,
+                 actor: str = "", via: str = ""):
         self.id = uuid.uuid4().hex[:12]
         self.title = title
         self.kind = kind
         self.cluster = cluster
+        self.actor = actor              # who asked for this, and how they signed in
+        self.via = via
         self.status = "running"          # running | ok | failed
         self.started = _now()
         self.finished: Optional[str] = None
@@ -92,6 +95,7 @@ class Job:
             return {
                 "id": self.id, "title": self.title, "kind": self.kind,
                 "cluster": self.cluster, "status": self.status,
+                "actor": self.actor, "via": self.via,
                 "started": self.started, "finished": self.finished,
                 "lines": self.lines[after:], "total": len(self.lines),
                 "result": self.result,
@@ -102,8 +106,9 @@ class Job:
         self._event.clear()
 
 
-def start(title: str, kind: str, target: Callable[[Job], None], cluster: str | None = None) -> Job:
-    job = Job(title, kind, cluster)
+def start(title: str, kind: str, target: Callable[[Job], None], cluster: str | None = None,
+          actor: str = "", via: str = "") -> Job:
+    job = Job(title, kind, cluster, actor=actor, via=via)
     with _lock:
         _jobs[job.id] = job
         _order.append(job.id)
@@ -131,9 +136,9 @@ class ConsoleJob(Job):
 
 
 def run_sync(title: str, kind: str, target: Callable[["Job"], None],
-             cluster: str | None = None) -> Job:
+             cluster: str | None = None, actor: str = "osmctl", via: str = "shell") -> Job:
     """Run a job in the foreground and return it when finished."""
-    job = ConsoleJob(title, kind, cluster)
+    job = ConsoleJob(title, kind, cluster, actor=actor, via=via)
     with _lock:
         _jobs[job.id] = job
         _order.append(job.id)

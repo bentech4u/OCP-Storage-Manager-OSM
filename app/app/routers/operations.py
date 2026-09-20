@@ -195,7 +195,8 @@ async def run_action(request: Request, rg: str = Form(...), action: str = Form(.
             raise RuntimeError("the action did not complete; see the output above")
         inventory.invalidate()
 
-    job = start(f"{action} {rg}", "replication-action", work, cluster=cluster or None)
+    job = start(f"{action} {rg}", "replication-action", work, cluster=cluster or None, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 

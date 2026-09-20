@@ -87,9 +87,28 @@
         <div class="field"><label>Redirect address</label>
           <input type="text" name="redirect_url" value="{{ setup.oidc.redirect_url }}" placeholder="https://installer.bentech.work:8800/auth/oidc/callback"></div>
       </div>
-      <div class="field"><label>Groups allowed to sign in</label>
-        <input type="text" name="allowed_groups" value="{{ setup.oidc.allowed_groups|join(', ') }}" placeholder="storage-admins, platform-team">
-        <div class="hint">Comma separated. Leave empty to allow anyone in the directory.</div></div>
+      <div class="row">
+        <div class="field"><label>Groups with full control</label>
+          <input type="text" name="allowed_groups" value="{{ setup.oidc.allowed_groups|join(', ') }}" placeholder="storage-admins">
+          <div class="hint">Comma separated, group names or object ids. Empty on both lists lets
+            anyone in the directory sign in with full control.</div></div>
+        <div class="field"><label>Groups with read only access</label>
+          <input type="text" name="viewer_groups" value="{{ setup.oidc.viewer_groups|join(', ') }}" placeholder="storage-readers">
+          <div class="hint">These accounts see every page but cannot install, change or fail over.</div></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Local account sign-in</label>
+          <select name="local_login">
+            <option value="always" {% if setup.local_login == 'always' %}selected{% endif %}>always allowed</option>
+            <option value="installer-host" {% if setup.local_login == 'installer-host' %}selected{% endif %}>only from the installer host</option>
+            <option value="off" {% if setup.local_login == 'off' %}selected{% endif %}>switched off, single sign-on only</option>
+          </select>
+          <div class="hint">The local account is the way back in when the provider is unreachable.
+            Even when switched off, <span class="mono">osmctl admin local-login always</span> restores it.</div></div>
+        <div class="field"><label>Scope requested</label>
+          <input type="text" name="scope" value="{{ setup.oidc.scope }}" placeholder="openid profile email">
+          <div class="hint">Add a groups scope here if your provider needs one.</div></div>
+      </div>
       <div class="btn-row">
         <button class="btn primary">Save</button>
         <button class="btn" hx-post="/setup/oidc/test" hx-target="#output">Test discovery</button>

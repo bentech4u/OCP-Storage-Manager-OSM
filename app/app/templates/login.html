@@ -14,13 +14,17 @@
       <div><div class="name">{{ app_name }}</div><div class="sub">{{ tagline }}</div></div>
     </div>
     {% if error %}<div class="banner bad"><span>⚠</span><div>{{ error }}</div></div>{% endif %}
+    {% if notice %}<div class="banner ok"><span>✓</span><div>{{ notice }}</div></div>{% endif %}
+
     {% if first_run %}
-      <div class="banner"><span>👋</span><div>First start. Choose the administrator password for this console.</div></div>
+      <div class="banner"><span>👋</span><div>First start. Choose the password for the local
+        administrator account.</div></div>
       <form method="post" action="/login">
         <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="source" value="local">
         <div class="field"><label for="password">New password</label>
           <input id="password" type="password" name="password" required minlength="8" autofocus>
-          <div class="hint">At least 8 characters. Stored as a bcrypt hash in the data directory.</div></div>
+          <div class="hint">At least 8 characters, stored as a bcrypt hash.</div></div>
         <div class="field"><label for="confirm">Repeat password</label>
           <input id="confirm" type="password" name="confirm" required minlength="8"></div>
         <button class="btn primary" style="width:100%">Create account and sign in</button>
@@ -28,16 +32,42 @@
     {% else %}
       <form method="post" action="/login">
         <input type="hidden" name="next" value="{{ next }}">
-        <div class="field"><label for="password">Administrator password</label>
-          <input id="password" type="password" name="password" required autofocus></div>
+        <div class="field"><label for="source">Sign in with</label>
+          <select id="source" name="source">
+            {% for o in options %}
+              <option value="{{ o.value }}" {% if o.value == chosen %}selected{% endif %}>{{ o.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field"><label for="username">User</label>
+          <input id="username" type="text" name="username" autocomplete="username"
+                 placeholder="admin, or your work account" value="{{ 'admin' if chosen == 'local' else '' }}"></div>
+        <div class="field"><label for="password">Password</label>
+          <input id="password" type="password" name="password" required autocomplete="current-password"></div>
         <button class="btn primary" style="width:100%">Sign in</button>
       </form>
-      {% if oidc.enabled %}
+      {% if oidc.enabled and redirect_available %}
         <div style="text-align:center;margin:.9rem 0 .2rem" class="muted small">or</div>
-        <a class="btn" style="width:100%" href="/auth/oidc/login">Sign in with {{ oidc.provider|capitalize }}</a>
+        <a class="btn" style="width:100%" href="/auth/oidc/login?next={{ next }}">
+          Sign in on the {{ "Microsoft" if oidc.provider == "entra" else "provider" }} page</a>
+        <div class="hint" style="text-align:center;margin-top:.4rem">Needed when the account uses
+          multi-factor authentication.</div>
       {% endif %}
     {% endif %}
   </div>
 </div>
+<script>
+  // the local account has one fixed user, so fill it in and get out of the way
+  (function () {
+    var source = document.getElementById("source");
+    var user = document.getElementById("username");
+    if (!source || !user) return;
+    function sync() {
+      if (source.value === "local") { user.value = "admin"; user.setAttribute("readonly", "readonly"); }
+      else { if (user.hasAttribute("readonly")) user.value = ""; user.removeAttribute("readonly"); }
+    }
+    source.addEventListener("change", sync); sync();
+  })();
+</script>
 </body>
 </html>

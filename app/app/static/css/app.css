@@ -327,3 +327,7 @@ a.step:hover { border-color: var(--brand); text-decoration: none; }
   margin-top: .25rem; }
 .ns { color: var(--brand); background: color-mix(in srgb, var(--brand) 16%, transparent);
   border-radius: 4px; padding: 0 .25rem; font-weight: 700; }
+
+/* who is signed in */
+.whoami { display: inline-flex; align-items: center; gap: .35rem; margin-right: .3rem;
+  color: var(--text-dim); }

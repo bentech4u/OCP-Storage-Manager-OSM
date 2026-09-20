@@ -13,6 +13,10 @@ from .config import SESSION_COOKIE, SESSION_MAX_AGE, session_secret
 
 PUBLIC_PATHS = ("/login", "/auth/", "/static/", "/healthz", "/favicon.ico")
 
+# How each sign-in reads in the interface.
+METHOD_LABELS = {"password": "local", "entra": "Microsoft Entra ID", "oidc": "single sign-on",
+                 "maintenance": "maintenance"}
+
 
 def _encode(password: str) -> bytes:
     # bcrypt itself refuses anything over 72 bytes, so cut there rather than fail.
@@ -36,8 +40,9 @@ def _serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(), salt="osm-session")
 
 
-def make_session(username: str, via: str = "password") -> str:
-    return _serializer().dumps({"u": username, "via": via})
+def make_session(username: str, via: str = "password", role: str = "admin") -> str:
+    """The cookie carries who signed in, how, and what they may do."""
+    return _serializer().dumps({"u": username, "via": via, "role": role})
 
 
 def read_session(request: Request) -> Optional[dict]:
@@ -52,6 +57,16 @@ def read_session(request: Request) -> Optional[dict]:
         return None
 
 
+def read_session_value(token: str) -> Optional[dict]:
+    """Read a signed value that did not come from a cookie, such as an OIDC state."""
+    if not token:
+        return None
+    try:
+        return _serializer().loads(token, max_age=900)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def set_session_cookie(response, token: str) -> None:
     response.set_cookie(
         SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax"
@@ -60,6 +75,10 @@ def set_session_cookie(response, token: str) -> None:
 
 def clear_session_cookie(response) -> None:
     response.delete_cookie(SESSION_COOKIE)
+
+
+def is_admin(session: dict | None) -> bool:
+    return bool(session) and session.get("role", "admin") != "viewer"
 
 
 def password_is_set() -> bool:

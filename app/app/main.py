@@ -7,9 +7,12 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+import urllib.parse
+
 from . import security, store
 from .config import APP_NAME, APP_TAGLINE, ensure_dirs
 from .routers import api, install, operations, setup
+from .services import oidc
 from .templating import templates
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
@@ -29,6 +32,14 @@ async def require_login(request: Request, call_next):
             return resp
         return security.login_redirect(request)
     request.state.user = session.get("u", "admin")
+    request.state.via = session.get("via", "password")
+    request.state.role = session.get("role", "admin")
+    if request.method not in ("GET", "HEAD") and not security.is_admin(session):
+        message = "This account is read-only."
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{message}</div></div>',
+                                status_code=403)
+        return JSONResponse({"detail": message}, status_code=403)
     return await call_next(request)
 
 
@@ -37,33 +48,127 @@ async def healthz():
     return {"status": "ok"}
 
 
-@app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, first_run: int = 0, next: str = "/", error: str = ""):
+def _sign_in_options(state: dict) -> list[dict]:
+    """What the list box on the login page offers."""
+    options = []
+    if state["setup"].get("local_login", "always") != "off" or not state["setup"]["oidc"]["enabled"]:
+        options.append({"value": "local", "label": "Local account"})
+    if state["setup"]["oidc"]["enabled"]:
+        cfg = state["setup"]["oidc"]
+        label = "Microsoft Entra ID" if cfg.get("provider") == "entra" else "Single sign-on"
+        options.append({"value": "entra", "label": label})
+    return options or [{"value": "local", "label": "Local account"}]
+
+
+def _login_page(request: Request, error: str = "", next: str = "/", chosen: str = "local",
+                notice: str = ""):
+    state = store.load()
     return templates.TemplateResponse(request, "login.html", {
         "first_run": not security.password_is_set(),
-        "next": next, "error": error, "app_name": APP_NAME, "tagline": APP_TAGLINE,
-        "oidc": store.load()["setup"]["oidc"],
+        "next": next, "error": error, "notice": notice,
+        "app_name": APP_NAME, "tagline": APP_TAGLINE,
+        "oidc": state["setup"]["oidc"], "options": _sign_in_options(state), "chosen": chosen,
+        "redirect_available": bool(state["setup"]["oidc"].get("redirect_url")),
     })
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request, first_run: int = 0, next: str = "/", error: str = ""):
+    return _login_page(request, error=error, next=next)
 
 
 @app.post("/login")
 async def login_submit(request: Request, password: str = Form(""), confirm: str = Form(""),
+                       username: str = Form(""), source: str = Form("local"),
                        next: str = Form("/")):
     state = store.load()
-    if not state["setup"].get("admin_password_hash"):
+
+    # first start: no password exists yet, so this call sets it
+    if not state["setup"].get("admin_password_hash") and source == "local":
         if len(password) < 8:
-            return await login_form(request, next=next, error="Use at least 8 characters.")
+            return _login_page(request, error="Use at least 8 characters.", next=next)
         if password != confirm:
-            return await login_form(request, next=next, error="The two passwords do not match.")
+            return _login_page(request, error="The two passwords do not match.", next=next)
         store.update(lambda s: s["setup"].update(
             {"admin_password_hash": security.hash_password(password)}))
-        token = security.make_session("admin")
+        token = security.make_session(state["setup"].get("admin_user", "admin"), "password")
+    elif source == "entra":
+        cfg = state["setup"]["oidc"]
+        if not cfg.get("enabled"):
+            return _login_page(request, error="Single sign-on is not enabled.", next=next,
+                               chosen="local")
+        try:
+            claims = oidc.password_login(cfg, username.strip(), password)
+        except oidc.OidcError as exc:
+            return _login_page(request, error=str(exc), next=next, chosen="entra")
+        role = oidc.role_for(cfg, claims)
+        if not role:
+            groups = ", ".join(oidc.groups_of(claims)) or "none"
+            return _login_page(request, next=next, chosen="entra", error=(
+                "that account signed in, but none of its groups are allowed here. It has: "
+                f"{groups}"))
+        token = security.make_session(oidc.account_name(claims), "entra", role)
     else:
-        if not security.verify_password(password, state["setup"]["admin_password_hash"]):
-            return await login_form(request, next=next, error="Wrong password.")
-        token = security.make_session("admin")
+        policy = state["setup"].get("local_login", "always")
+        if policy == "off" and state["setup"]["oidc"]["enabled"]:
+            return _login_page(request, chosen="entra", next=next, error=(
+                "local sign-in is switched off. Use single sign-on, or run "
+                "osmctl admin local-login always on the installer host."))
+        if policy == "installer-host" and (request.client.host if request.client else "") not in (
+                "127.0.0.1", "::1"):
+            return _login_page(request, chosen="entra", next=next, error=(
+                "local sign-in is limited to the installer host."))
+        expected = state["setup"].get("admin_user", "admin")
+        if username and username.strip() != expected:
+            return _login_page(request, error="Wrong user or password.", next=next)
+        if not security.verify_password(password, state["setup"]["admin_password_hash"] or ""):
+            return _login_page(request, error="Wrong user or password.", next=next)
+        token = security.make_session(expected, "password")
+
     response = RedirectResponse(next or "/", status_code=303)
     security.set_session_cookie(response, token)
+    return response
+
+
+@app.get("/auth/oidc/login")
+async def oidc_redirect(request: Request, next: str = "/"):
+    """Send the browser to the provider's own sign-in page."""
+    cfg = store.load()["setup"]["oidc"]
+    if not cfg.get("enabled"):
+        return RedirectResponse("/login?error=Single+sign-on+is+not+enabled", status_code=303)
+    redirect_uri = cfg.get("redirect_url") or str(request.url_for("oidc_callback"))
+    state = security.make_session(f"state:{next}", "oidc-state")
+    try:
+        url = oidc.auth_url(cfg, state, redirect_uri)
+    except oidc.OidcError as exc:
+        return RedirectResponse(f"/login?error={urllib.parse.quote(str(exc))}", status_code=303)
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/auth/oidc/callback", name="oidc_callback")
+async def oidc_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                        error_description: str = ""):
+    if error:
+        message = error_description or error
+        return RedirectResponse(f"/login?error={urllib.parse.quote(message[:200])}",
+                                status_code=303)
+    cfg = store.load()["setup"]["oidc"]
+    parsed = security.read_session_value(state)
+    target = "/"
+    if parsed and str(parsed.get("u", "")).startswith("state:"):
+        target = parsed["u"].split("state:", 1)[1] or "/"
+    redirect_uri = cfg.get("redirect_url") or str(request.url_for("oidc_callback"))
+    try:
+        claims = oidc.exchange_code(cfg, code, redirect_uri)
+    except oidc.OidcError as exc:
+        return RedirectResponse(f"/login?error={urllib.parse.quote(str(exc))}", status_code=303)
+    role = oidc.role_for(cfg, claims)
+    if not role:
+        return RedirectResponse("/login?error=" + urllib.parse.quote(
+            "that account is not in a group allowed here"), status_code=303)
+    response = RedirectResponse(target, status_code=303)
+    security.set_session_cookie(response, security.make_session(
+        oidc.account_name(claims), "entra", role))
     return response
 
 

@@ -44,13 +44,14 @@
     <div class="card-head" style="padding:1rem 1.1rem 0"><h2>Job history</h2>
       <span class="sub">every action this console has run</span></div>
     <table>
-      <thead><tr><th>Task</th><th>Kind</th><th>Cluster</th><th>Started</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Task</th><th>Kind</th><th>Cluster</th><th>Who</th><th>Started</th><th>Status</th><th></th></tr></thead>
       <tbody>
       {% for j in jobs %}
         <tr>
           <td>{{ j.title }}</td>
           <td class="small muted">{{ j.kind }}</td>
           <td class="small muted">{{ j.cluster or "-" }}</td>
+          <td class="small">{{ j.actor or "-" }}{% if j.via %}<div class="muted">{{ j.via }}</div>{% endif %}</td>
           <td class="small nowrap">{{ j.started|ago }}</td>
           <td><span class="pill {{ 'ok' if j.status == 'ok' else ('bad' if j.status == 'failed' else 'info') }}">
             {{ j.status }}</span></td>
@@ -58,7 +59,7 @@
             hx-target="#output">View log</button></td>
         </tr>
       {% else %}
-        <tr><td colspan="6" class="empty">Nothing has run yet.</td></tr>
+        <tr><td colspan="7" class="empty">Nothing has run yet.</td></tr>
       {% endfor %}
       </tbody>
     </table>

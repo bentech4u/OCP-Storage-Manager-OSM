@@ -37,6 +37,14 @@
       </div>
       <div class="actions">
         {% block topactions %}{% endblock %}
+        {% if request.state.user is defined %}
+        <span class="whoami small">
+          <strong>{{ request.state.user }}</strong>
+          <span class="pill {{ 'info' if request.state.via == 'entra' else 'mute' }}">
+            {{ "Entra ID" if request.state.via == "entra" else request.state.via }}</span>
+          {% if request.state.role == "viewer" %}<span class="pill warn">read only</span>{% endif %}
+        </span>
+        {% endif %}
         <button class="btn ghost sm" onclick="toggleTheme()" title="Light or dark">◐</button>
         <a class="btn ghost sm" href="/logout">Sign out</a>
       </div>

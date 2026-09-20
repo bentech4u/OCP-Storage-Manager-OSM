@@ -61,7 +61,9 @@ async def change_password(request: Request, new: str = Form(...), confirm: str =
 async def save_oidc(request: Request, enabled: str = Form(""), provider: str = Form("entra"),
                     tenant_id: str = Form(""), issuer: str = Form(""), client_id: str = Form(""),
                     client_secret: str = Form(""), redirect_url: str = Form(""),
-                    allowed_groups: str = Form("")):
+                    allowed_groups: str = Form(""), viewer_groups: str = Form(""),
+                    scope: str = Form("openid profile email"),
+                    local_login: str = Form("always")):
     if provider == "entra" and tenant_id and not issuer:
         issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
     cfg = {
@@ -69,8 +71,11 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
         "issuer": issuer.strip(), "client_id": client_id.strip(),
         "client_secret": client_secret.strip(), "redirect_url": redirect_url.strip(),
         "allowed_groups": [g.strip() for g in allowed_groups.split(",") if g.strip()],
+        "viewer_groups": [g.strip() for g in viewer_groups.split(",") if g.strip()],
+        "scope": scope.strip() or "openid profile email",
+        "method": "password",
     }
-    store.update(lambda s: s["setup"].update({"oidc": cfg}))
+    store.update(lambda s: s["setup"].update({"oidc": cfg, "local_login": local_login}))
     notice = "Single sign-on settings saved."
     if cfg["enabled"]:
         notice += " Sign-in with the provider appears on the login page."
@@ -86,7 +91,7 @@ async def test_oidc(request: Request):
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
             doc = json.load(resp)
-        ok = bool(doc.get("authorization_endpoint"))
+        ok = bool(doc.get("authorization_endpoint") and doc.get("token_endpoint"))
         return HTMLResponse(
             f'<div class="banner {"ok" if ok else "warn"}"><span>{"✓" if ok else "⚠"}</span>'
             f'<div>Discovery document reached at {url}.<div class="small muted">'

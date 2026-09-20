@@ -25,7 +25,11 @@ DEFAULT_STATE: dict[str, Any] = {
             "tenant_id": "",
             "redirect_url": "",
             "allowed_groups": [],
+            "viewer_groups": [],
+            "scope": "openid profile email",
+            "method": "password",          # password form, or redirect to the provider
         },
+        "local_login": "always",           # always | installer-host | off
         "alerts": {
             "enabled": False,
             "smtp_host": "",

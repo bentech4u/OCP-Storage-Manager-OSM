@@ -418,6 +418,13 @@ def cmd_admin_revoke(args) -> None:
     print("session key rotated; everyone signed out (restart the service to apply)")
 
 
+def cmd_admin_local_login(args) -> None:
+    store.update(lambda s: s["setup"].update({"local_login": args.policy}))
+    print(f"local account sign-in: {args.policy}")
+    if args.policy == "off":
+        print("single sign-on is now the only way in through the browser; this command restores it")
+
+
 def cmd_admin_show(args) -> None:
     from app.config import BIN_DIR, DATA_DIR, HELM_CHART_DIR, KUBECONFIG_DIR, LOG_DIR, ROOT
     state = store.load()
@@ -430,7 +437,9 @@ def cmd_admin_show(args) -> None:
         {"item": "tools", "value": str(BIN_DIR)},
         {"item": "job logs", "value": str(LOG_DIR)},
         {"item": "password set", "value": "yes" if state["setup"].get("admin_password_hash") else "NO"},
-        {"item": "single sign-on", "value": "on" if state["setup"]["oidc"]["enabled"] else "off"},
+        {"item": "single sign-on", "value": ("on, " + (state["setup"]["oidc"].get("provider") or "")
+                                             if state["setup"]["oidc"]["enabled"] else "off")},
+        {"item": "local sign-in", "value": state["setup"].get("local_login", "always")},
         {"item": "alerts", "value": "on" if state["setup"]["alerts"]["enabled"] else "off"},
         {"item": "service", "value": maintenance.service("is-active")[1]},
         {"item": "listening on 8800", "value": "yes" if maintenance.listening() else "no"},
@@ -637,6 +646,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="remove the password so the next visit sets a new one")
     fp.set_defaults(func=cmd_admin_forget_password)
     ad.add_parser("revoke-sessions", help="sign everyone out").set_defaults(func=cmd_admin_revoke)
+    ll = ad.add_parser("local-login", help="when the local account may be used in the browser")
+    ll.add_argument("policy", choices=["always", "installer-host", "off"])
+    ll.set_defaults(func=cmd_admin_local_login)
     ad.add_parser("show", help="paths and settings at a glance").set_defaults(func=cmd_admin_show)
     rs = ad.add_parser("reset", help="clear clusters, arrays and stored credentials")
     rs.add_argument("--scope", default="inventory", choices=["inventory", "everything"])

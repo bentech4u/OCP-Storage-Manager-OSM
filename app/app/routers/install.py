@@ -118,7 +118,8 @@ async def install_repctl(request: Request, source: str = Form("download"),
             tools.install_repctl_from_url(job, url or tools.default_repctl_choice()["url"])
         inventory.invalidate()
 
-    job = start(f"Install repctl ({source})", "repctl", work)
+    job = start(f"Install repctl ({source})", "repctl", work, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 
@@ -149,7 +150,8 @@ async def repctl_register(request: Request):
                                         or listing.get("error", "nothing")))
         job.log("store: " + listing["path"])
 
-    job = start("Register clusters with repctl", "repctl", work)
+    job = start("Register clusters with repctl", "repctl", work, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 
@@ -260,7 +262,8 @@ async def make_service_account(request: Request, cid: str,
         }))
         inventory.invalidate()
 
-    job = start(f"Create service account kubeconfig on {cid}", "kubeconfig", work, cluster=cid)
+    job = start(f"Create service account kubeconfig on {cid}", "kubeconfig", work, cluster=cid, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 
@@ -414,7 +417,8 @@ async def install_driver(request: Request):
         }}))
         inventory.invalidate()
 
-    job = start(f"Install driver on {cid} ({method})", "driver", work, cluster=cid)
+    job = start(f"Install driver on {cid} ({method})", "driver", work, cluster=cid, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 
@@ -431,7 +435,8 @@ async def uninstall_driver(request: Request, cluster_id: str = Form(...)):
         installer.helm_uninstall_driver(job, cluster["kubeconfig"], ns)
         inventory.invalidate()
 
-    job = start(f"Uninstall driver on {cluster_id}", "driver", work, cluster=cluster_id)
+    job = start(f"Uninstall driver on {cluster_id}", "driver", work, cluster=cluster_id, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 
@@ -490,7 +495,8 @@ async def create_storage_class(request: Request):
                 job, src["kubeconfig"], installer.storage_class_manifest(name, array, opts))
         inventory.invalidate()
 
-    job = start(f"Storage class {name}", "storageclass", work, cluster=src["id"])
+    job = start(f"Storage class {name}", "storageclass", work, cluster=src["id"], actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 
@@ -558,6 +564,7 @@ async def replication_setup(request: Request, source_cluster: str = Form(...),
         inventory.invalidate()
 
     job = start(f"Wire replication {source_cluster} to {target_cluster}", "replication", work,
-                cluster=source_cluster)
+                cluster=source_cluster, actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
