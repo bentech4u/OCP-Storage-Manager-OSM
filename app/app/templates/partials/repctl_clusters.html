@@ -1,0 +1,38 @@
+<div class="card" style="margin-top:.9rem">
+  <div class="card-head">
+    <div><h3>What repctl knows</h3>
+      <div class="sub">repctl keeps its own copy of each kubeconfig, separate from the list above</div></div>
+    <button class="btn sm" hx-post="/install/repctl/register" hx-target="#output"
+      data-confirm="Copy every cluster's kubeconfig into repctl's store?">Register clusters with repctl</button>
+  </div>
+  {% if repctl.error %}
+    <div class="banner warn" style="margin-bottom:.6rem"><span>⚠</span>
+      <div>{{ repctl.error }}.
+        {% if clusters %}Use the button above, or run the replication setup in step 6, which does this too.{% endif %}</div></div>
+  {% endif %}
+  <table>
+    <thead><tr><th>Cluster id in repctl</th><th>Known to this console</th><th>Version</th><th>API address</th></tr></thead>
+    <tbody>
+      {% for r in repctl.rows %}
+        <tr><td class="mono">{{ r.id }}</td>
+          <td>{% if r.id in clusters|map(attribute='id')|list %}<span class="pill ok">yes</span>
+              {% else %}<span class="pill warn">only in repctl</span>{% endif %}</td>
+          <td class="small muted">{{ r.version }}</td>
+          <td class="small muted truncate">{{ r.url }}</td></tr>
+      {% else %}
+        {% for c in clusters %}
+        <tr><td class="mono muted">{{ c.id }}</td>
+          <td><span class="pill mute">not registered</span></td>
+          <td class="small muted">-</td>
+          <td class="small muted truncate">{{ c.server }}</td></tr>
+        {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top:.6rem">This is the standard repctl store, so
+    <span class="mono">repctl cluster get</span> in any shell shows the same list, and
+    <span class="mono">osmctl</span> runs every one of these actions without the console.
+    Store: <span class="mono">{{ repctl.path }}</span>
+    {% if repctl.files %}&middot; files: <span class="mono">{{ repctl.files|join(', ') }}</span>{% endif %}</p>
+  {% if repctl.raw %}<div class="console" style="max-height:160px;margin-top:.5rem">{{ repctl.raw }}</div>{% endif %}
+</div>

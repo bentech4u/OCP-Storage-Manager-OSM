@@ -1,0 +1,36 @@
+<table>
+  <thead><tr><th>Group</th><th>Cluster</th><th>Role</th><th>Link</th><th>Last action</th><th class="right">Actions</th></tr></thead>
+  <tbody>
+  {% for g in groups %}
+    <tr>
+      <td><strong>{{ g.name }}</strong>
+        <div class="small muted truncate" title="{{ g.protection_group }}">{{ g.protection_group }}</div></td>
+      <td class="small">{{ g.cluster }}<div class="muted">peer {{ g.remote_cluster }}</div></td>
+      <td>{% if g.is_source %}<span class="pill info">source</span>
+          {% elif g.is_source is none %}<span class="pill mute">unknown</span>
+          {% else %}<span class="pill mute">target</span>{% endif %}</td>
+      <td>
+        {% if g.link_state in ("SYNCHRONIZED", "Synchronized") %}<span class="pill ok"><span class="dot"></span>{{ g.link_state }}</span>
+        {% elif g.link_state %}<span class="pill warn"><span class="dot"></span>{{ g.link_state }}</span>
+        {% else %}<span class="pill mute">{{ g.state or "unknown" }}</span>{% endif %}
+      </td>
+      <td class="small muted">{{ g.last_action or "-" }}</td>
+      <td class="right nowrap">
+        <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=sync"
+          hx-target="#output">Sync</button>
+        <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=suspend"
+          hx-target="#output">Suspend</button>
+        <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=reprotect"
+          hx-target="#output">Reprotect</button>
+        <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=failover"
+          hx-target="#output">Failover</button>
+        <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=failback"
+          hx-target="#output">Failback</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No replication groups yet. They appear once a claim is created
+      with a replicated storage class.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

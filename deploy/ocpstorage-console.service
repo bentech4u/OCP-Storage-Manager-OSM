@@ -1,0 +1,24 @@
+[Unit]
+Description=OCP Storage Manager (OSM) console
+Documentation=file:/opt/ocpstorage/app/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ocpstorage
+Group=ocpstorage
+WorkingDirectory=/opt/ocpstorage/app
+Environment=OSM_HOME=/opt/ocpstorage
+Environment=HOME=/opt/ocpstorage
+Environment=OSM_PORT=8800
+ExecStart=/opt/ocpstorage/app/run.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/ocpstorage
+
+[Install]
+WantedBy=multi-user.target

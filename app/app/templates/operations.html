@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Operations - {{ app_name }}{% endblock %}
+{% block crumbs %}Operations{% endblock %}
+{% block heading %}Replication operations{% endblock %}
+{% block topactions %}
+<button class="btn sm" hx-get="/partials/groups" hx-target="#groups"><span class="spin htmx-indicator"></span> Refresh</button>
+{% endblock %}
+{% block content %}
+{% if not repctl_ready %}
+<div class="banner warn"><span>⚠</span>
+  <div><strong>repctl is not installed</strong>
+    <div class="small muted">Failover, failback and reprotect all run through it.</div></div>
+  <div class="spacer"></div><a class="btn sm" href="/install#tools">Install it</a></div>
+{% endif %}
+
+<div id="output">{% if selected_job %}{% include "partials/console.html" with context %}{% endif %}</div>
+
+<section class="section">
+  <div class="card pad-0" id="groups-card">
+    <div class="card-head" style="padding:1rem 1.1rem 0">
+      <div><h2>Replication groups</h2>
+        <div class="sub">One group per namespace and storage class pair. Actions run through repctl.</div></div>
+    </div>
+    <div id="groups">{% include "partials/groups.html" %}</div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0">
+      <div><h2>SyncIQ on the arrays</h2>
+        <div class="sub">What the storage side reports, independent of Kubernetes.</div></div>
+      <button class="btn sm" hx-get="/partials/synciq" hx-target="#synciq">Refresh</button>
+    </div>
+    <div id="synciq" hx-get="/partials/synciq" hx-trigger="load"><div class="empty">Loading…</div></div>
+  </div>
+</section>
+
+<section class="section" id="jobs">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0"><h2>Job history</h2>
+      <span class="sub">every action this console has run</span></div>
+    <table>
+      <thead><tr><th>Task</th><th>Kind</th><th>Cluster</th><th>Started</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr>
+          <td>{{ j.title }}</td>
+          <td class="small muted">{{ j.kind }}</td>
+          <td class="small muted">{{ j.cluster or "-" }}</td>
+          <td class="small nowrap">{{ j.started|ago }}</td>
+          <td><span class="pill {{ 'ok' if j.status == 'ok' else ('bad' if j.status == 'failed' else 'info') }}">
+            {{ j.status }}</span></td>
+          <td class="right"><button class="btn sm ghost" hx-get="/operations/jobs/{{ j.id }}"
+            hx-target="#output">View log</button></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="empty">Nothing has run yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

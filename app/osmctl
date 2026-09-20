@@ -1,0 +1,665 @@
+#!/opt/ocpstorage/app/.venv/bin/python
+"""osmctl - the OSM console's operations from a shell.
+
+Everything the web pages do is available here, against the same state, so the console
+being down never blocks an installation or a failover.
+
+  osmctl status
+  osmctl cluster add --id cluster-1 --server https://api.x:6443 --user kubeadmin --password ...
+  osmctl cluster add --id cluster-2 --kubeconfig /root/.kube/config
+  osmctl cluster list | rbac --id | serviceaccount --id
+  osmctl array add --endpoint 192.168.68.140 --user csiuser --password ...
+  osmctl driver install --cluster cluster-1 --mode replication [--method helm|operator]
+  osmctl sc create --name isilon --cluster cluster-1 --array isin-main [--replicated ...]
+  osmctl repctl register        # repctl cluster add for every known cluster
+  osmctl repctl -- cluster get  # anything else, with the right environment
+  osmctl rg list
+  osmctl rg failover --rg <name> --target cluster-2 [--unplanned]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from app import store                                            # noqa: E402
+from app.config import DRIVER_NAMESPACE_DEFAULT, match_owner                  # noqa: E402
+from app.services import (installer, inventory, k8s, maintenance, replication,  # noqa: E402
+                          tools)
+from app.services.arrays import ArrayError, OneFS                # noqa: E402
+from app.services.jobs import run_sync                           # noqa: E402
+
+
+def die(message: str) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def table(rows: list[dict], columns: list[str]) -> None:
+    if not rows:
+        print("(nothing)")
+        return
+    widths = {c: max(len(c), *(len(str(r.get(c, ""))) for r in rows)) for c in columns}
+    print("  ".join(c.upper().ljust(widths[c]) for c in columns))
+    for r in rows:
+        print("  ".join(str(r.get(c, "")).ljust(widths[c]) for c in columns))
+
+
+# --- status --------------------------------------------------------------------
+def cmd_status(args) -> None:
+    data = inventory.snapshot(force=True)
+    print("tools")
+    table([{"tool": n, "found": "yes" if t["found"] else "no", "version": t["version"],
+            "path": t["path"]} for n, t in data["tools"].items()],
+          ["tool", "found", "version", "path"])
+    print("\nclusters")
+    table([{"id": c["id"], "role": c.get("role", ""), "server": c.get("server", ""),
+            "reachable": "yes" if c.get("reachable") else "no",
+            "driver": "ready" if c.get("driver", {}).get("controller_ready") else "-"}
+           for c in data["clusters"]], ["id", "role", "server", "reachable", "driver"])
+    print("\narrays")
+    table([{"name": a.get("name", a.get("id")), "endpoint": a.get("endpoint", ""),
+            "onefs": a.get("onefs_version", ""),
+            "reachable": "yes" if a.get("reachable") else "no",
+            "synciq": a.get("synciq_service", "")} for a in data["arrays"]],
+          ["name", "endpoint", "onefs", "reachable", "synciq"])
+    listing = replication.list_clusters()
+    print(f"\nrepctl store: {listing['path']}")
+    if listing["rows"]:
+        table(listing["rows"], ["id", "version", "url"])
+    else:
+        print(listing.get("error", "empty"))
+
+
+# --- clusters ------------------------------------------------------------------
+def cmd_cluster_add(args) -> None:
+    cid = args.id.strip().lower()
+    if args.kubeconfig:
+        try:
+            content = Path(args.kubeconfig).read_text()
+        except OSError as exc:
+            die(str(exc))
+        path = k8s.save_kubeconfig(cid, content)
+    elif args.server:
+        password = args.password or os.environ.get("OSM_PASSWORD") or ""
+        if not password:
+            import getpass
+            password = getpass.getpass(f"password for {args.user}: ")
+        path = k8s.login_kubeconfig(args.server, args.user, password, cid,
+                                    insecure=not args.verify_tls)
+    else:
+        die("give --kubeconfig or --server with --user")
+    info = k8s.probe(path)
+    record = {
+        "id": cid, "role": args.role, "namespace": args.namespace,
+        "kubeconfig": str(path), "server": info.get("server", ""), "added": store.now(),
+        "admin_kubeconfig": str(path), "service_account_kubeconfig": "",
+        "openshift": info.get("is_openshift", False),
+        "openshift_version": info.get("openshift_version", ""),
+        "kubernetes_version": info.get("kubernetes_version", ""),
+        "connected_via": "kubeconfig" if args.kubeconfig else "login",
+        "connected_as": info.get("user", ""),
+    }
+    store.update(lambda s: s["clusters"].update({cid: record}))
+    inventory.invalidate()
+    print(f"added {cid}: {info.get('server')} as {info.get('user')}, "
+          f"cluster-admin={info.get('cluster_admin')}")
+
+
+def cmd_cluster_list(args) -> None:
+    rows = [{"id": c["id"], "role": c.get("role", ""), "server": c.get("server", ""),
+             "identity": c.get("connected_as", ""),
+             "kubeconfig": c.get("kubeconfig", "")}
+            for c in store.load()["clusters"].values()]
+    table(rows, ["id", "role", "server", "identity", "kubeconfig"])
+
+
+def cmd_cluster_rbac(args) -> None:
+    cluster = store.load()["clusters"].get(args.id) or die(f"unknown cluster {args.id}")
+    report = k8s.rbac_report(cluster["kubeconfig"])
+    table([{"permission": f"{r['verb']} {r['resource']}",
+            "allowed": "yes" if r["ok"] else "NO", "needed for": r["why"]} for r in report],
+          ["permission", "allowed", "needed for"])
+
+
+def cmd_cluster_sa(args) -> None:
+    state = store.load()
+    cluster = state["clusters"].get(args.id) or die(f"unknown cluster {args.id}")
+
+    def work(job):
+        content = k8s.create_sa_kubeconfig(job, cluster["admin_kubeconfig"], args.id,
+                                           ns=args.namespace, sa=args.name, role=args.role)
+        path = k8s.kubeconfig_path(f"{args.id}-sa")
+        path.write_text(content)
+        path.chmod(0o600)
+        match_owner(path)
+        job.log(f"saved {path}")
+        store.update(lambda s: s["clusters"][args.id].update({
+            "service_account_kubeconfig": str(path), "kubeconfig": str(path),
+            "sa_name": args.name, "sa_namespace": args.namespace, "sa_role": args.role}))
+        inventory.invalidate()
+
+    job = run_sync(f"service account on {args.id}", "kubeconfig", work, cluster=args.id)
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+def cmd_cluster_remove(args) -> None:
+    store.update(lambda s: s["clusters"].pop(args.id, None))
+    inventory.invalidate()
+    print(f"removed {args.id} from the console; nothing was uninstalled")
+
+
+# --- arrays --------------------------------------------------------------------
+def cmd_array_add(args) -> None:
+    password = args.password or os.environ.get("OSM_ARRAY_PASSWORD") or ""
+    if not password:
+        import getpass
+        password = getpass.getpass(f"password for {args.user}@{args.endpoint}: ")
+    client = OneFS(args.endpoint, args.port, args.user, password, verify=args.verify_tls)
+    try:
+        info = client.inspect()
+    except ArrayError as exc:
+        die(str(exc))
+    if args.create_path and not client.check_path(args.path)["exists"]:
+        client.create_path(args.path)
+    aid = (info.get("name") or args.endpoint).lower()
+    record = {
+        "id": aid, "name": info.get("name") or aid, "endpoint": args.endpoint,
+        "port": args.port, "username": args.user, "password": password,
+        "isi_path": args.path, "access_zone": args.zone,
+        "skip_cert_validation": not args.verify_tls, "is_default": args.default,
+        "added": store.now(),
+        "replication_certificate_id": info.get("synciq_cluster_certificate_id", ""),
+        "onefs_version": info.get("onefs_version", ""),
+        "path_ok": client.check_path(args.path)["exists"],
+    }
+    store.update(lambda s: s["arrays"].update({aid: record}))
+    inventory.invalidate()
+    print(f"added {record['name']} ({args.endpoint}), OneFS {record['onefs_version']}")
+    if info.get("missing_privileges"):
+        print("missing privileges: " + ", ".join(info["missing_privileges"]))
+
+
+def cmd_array_list(args) -> None:
+    rows = [{"id": a["id"], "name": a["name"], "endpoint": a["endpoint"],
+             "path": a["isi_path"], "default": "yes" if a.get("is_default") else ""}
+            for a in store.load()["arrays"].values()]
+    table(rows, ["id", "name", "endpoint", "path", "default"])
+
+
+# --- driver --------------------------------------------------------------------
+def cmd_driver_install(args) -> None:
+    state = store.load()
+    cluster = state["clusters"].get(args.cluster) or die(f"unknown cluster {args.cluster}")
+    arrays = list(state["arrays"].values())
+    if not arrays:
+        die("register an array first")
+    opts = {
+        "endpoint_port": args.port, "skip_cert_validation": not args.verify_tls,
+        "auth_type": args.auth_type, "access_zone": args.zone, "isi_path": args.path,
+        "enable_quota": not args.no_quota, "replication": args.mode == "replication",
+        "snapshots": not args.no_snapshots, "controller_count": args.replicas,
+        "openshift": cluster.get("openshift", True),
+        "target_cluster_ids": [c["id"] for c in state["clusters"].values()
+                               if c["id"] != args.cluster],
+    }
+    ns = args.namespace or cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+    default_array = args.default_array or arrays[0]["id"]
+
+    def work(job):
+        for w in dict.fromkeys(installer.support_warnings(
+                cluster.get("openshift_version", ""),
+                [a.get("onefs_version", "") for a in arrays])):
+            job.log("note: " + w)
+        if args.method == "operator":
+            pkgs = installer.operator_catalog_options(cluster["kubeconfig"])
+            pkg = args.package or (pkgs[0]["package"] if pkgs else "")
+            if not pkg:
+                raise RuntimeError("no Dell operator package in this cluster's catalogs")
+            channel = args.channel or next(
+                (p["default_channel"] for p in pkgs if p["package"] == pkg), "stable")
+            source = next((p["catalog"] for p in pkgs if p["package"] == pkg),
+                          "certified-operators")
+            installer.operator_install(job, cluster["kubeconfig"], pkg, channel, source)
+            installer.operator_apply_cr(job, cluster["kubeconfig"], ns, opts, arrays, default_array)
+        else:
+            installer.helm_install_driver(job, cluster["kubeconfig"], ns, opts, arrays,
+                                          upgrade=args.upgrade, default_array_id=default_array)
+        store.update(lambda s: s["installs"].update({args.cluster: {
+            "method": args.method, "namespace": ns, "mode": args.mode,
+            "when": store.now(), "arrays": [a["id"] for a in arrays],
+            "default_array": default_array}}))
+        inventory.invalidate()
+
+    job = run_sync(f"install driver on {args.cluster}", "driver", work, cluster=args.cluster)
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+def cmd_driver_uninstall(args) -> None:
+    cluster = store.load()["clusters"].get(args.cluster) or die(f"unknown cluster {args.cluster}")
+    ns = args.namespace or cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+    job = run_sync(f"uninstall driver on {args.cluster}", "driver",
+                   lambda j: installer.helm_uninstall_driver(j, cluster["kubeconfig"], ns),
+                   cluster=args.cluster)
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+# --- storage classes ------------------------------------------------------------
+def cmd_sc_create(args) -> None:
+    state = store.load()
+    src = state["clusters"].get(args.cluster) or die(f"unknown cluster {args.cluster}")
+    array = state["arrays"].get(args.array) or die(f"unknown array {args.array}")
+    opts = {"access_zone": args.zone, "isi_path": args.path,
+            "az_service_ip": args.nfs_address or array["endpoint"],
+            "root_client_enabled": args.root_client,
+            "reclaim_policy": args.reclaim, "binding_mode": args.binding}
+    rep = None
+    if args.replicated:
+        tgt = state["clusters"].get(args.target_cluster) or die("give --target-cluster")
+        tgt_array = state["arrays"].get(args.target_array) or die("give --target-array")
+        rep = {"remote_storage_class": args.name, "remote_cluster_id": tgt["id"],
+               "remote_system": tgt_array["name"],
+               "remote_az_service_ip": args.target_nfs_address or tgt_array["endpoint"],
+               "rpo": args.rpo, "ignore_namespaces": args.ignore_namespaces,
+               "volume_group_prefix": args.volume_group_prefix,
+               "remote_access_zone": tgt_array.get("access_zone", "System")}
+
+    def work(job):
+        installer.apply_storage_class(job, src["kubeconfig"],
+                                      installer.storage_class_manifest(args.name, array, opts, rep))
+        if rep:
+            back = dict(rep)
+            back.update({"remote_cluster_id": src["id"], "remote_system": array["name"],
+                         "remote_az_service_ip": opts["az_service_ip"],
+                         "remote_access_zone": array.get("access_zone", "System")})
+            tgt = state["clusters"][args.target_cluster]
+            tgt_array = state["arrays"][args.target_array]
+            tgt_opts = dict(opts)
+            tgt_opts["az_service_ip"] = args.target_nfs_address or tgt_array["endpoint"]
+            installer.apply_storage_class(
+                job, tgt["kubeconfig"],
+                installer.storage_class_manifest(args.name, tgt_array, tgt_opts, back))
+        inventory.invalidate()
+
+    job = run_sync(f"storage class {args.name}", "storageclass", work, cluster=args.cluster)
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+# --- repctl ---------------------------------------------------------------------
+def cmd_repctl_register(args) -> None:
+    clusters = list(store.load()["clusters"].values())
+    if not clusters:
+        die("no clusters registered in the console")
+    job = run_sync("register clusters with repctl", "repctl",
+                   lambda j: replication.add_clusters(j, clusters))
+    listing = replication.list_clusters()
+    print(f"\nrepctl store: {listing['path']}")
+    table(listing["rows"], ["id", "version", "url"]) if listing["rows"] else print(listing["error"])
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+def cmd_repctl_passthrough(args) -> None:
+    binary = tools.which("repctl") or die("repctl is not installed; run osmctl tools install-repctl")
+    proc = subprocess.run([binary] + args.args, env=replication.repctl_env())
+    raise SystemExit(proc.returncode)
+
+
+def cmd_repctl_setup(args) -> None:
+    state = store.load()
+    src = state["clusters"].get(args.source) or die(f"unknown cluster {args.source}")
+    tgt = state["clusters"].get(args.target) or die(f"unknown cluster {args.target}")
+
+    def work(job):
+        installer.helm_install_replication_controller(job, src["kubeconfig"], src["id"], [tgt["id"]])
+        installer.helm_install_replication_controller(job, tgt["kubeconfig"], tgt["id"], [src["id"]])
+        replication.add_clusters(job, [src, tgt])
+        replication.inject(job, [src["id"], tgt["id"]], use_sa=not args.admin_configs)
+        replication.configure_controller(job, src["kubeconfig"], src["id"], [tgt["id"]])
+        replication.configure_controller(job, tgt["kubeconfig"], tgt["id"], [src["id"]])
+        inventory.invalidate()
+
+    job = run_sync(f"wire replication {args.source} to {args.target}", "replication", work)
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+def cmd_tools_install_repctl(args) -> None:
+    def work(job):
+        if args.file:
+            tools.install_repctl_from_upload(job, Path(args.file).read_bytes(), args.file)
+        elif args.build:
+            tools.build_repctl_from_source(job, args.version)
+        else:
+            url = args.url or tools.default_repctl_choice()["url"]
+            tools.install_repctl_from_url(job, url)
+
+    job = run_sync("install repctl", "repctl", work)
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+# --- replication groups ----------------------------------------------------------
+def cmd_rg_list(args) -> None:
+    rows = []
+    for cid, cluster in store.load()["clusters"].items():
+        for rg in replication.replication_groups(cluster["kubeconfig"]):
+            rows.append({"cluster": cid, "group": rg["name"],
+                         "role": "source" if rg.get("is_source") else "target",
+                         "link": rg.get("link_state", ""), "state": rg.get("state", ""),
+                         "remote": rg.get("remote_cluster", "")})
+    table(rows, ["cluster", "group", "role", "remote", "link", "state"])
+
+
+def cmd_rg_action(args) -> None:
+    preview = replication.action_preview(args.rg, args.action, args.target,
+                                         args.unplanned, args.discard)
+    print(preview)
+    if not args.yes:
+        answer = input("run this? type yes: ").strip().lower()
+        if answer != "yes":
+            raise SystemExit("cancelled")
+    job = run_sync(f"{args.action} {args.rg}", "replication-action",
+                   lambda j: replication.act(j, args.rg, args.action, args.target,
+                                             args.unplanned, args.discard))
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+# --- admin ----------------------------------------------------------------------
+def _ask_password(prompt: str) -> str:
+    import getpass
+    first = getpass.getpass(prompt)
+    if first != getpass.getpass("repeat: "):
+        die("the two passwords do not match")
+    return first
+
+
+def cmd_admin_passwd(args) -> None:
+    password = args.password or os.environ.get("OSM_ADMIN_PASSWORD") or _ask_password(
+        "new console password: ")
+    try:
+        maintenance.set_password(password)
+    except ValueError as exc:
+        die(str(exc))
+    revoked = maintenance.revoke_sessions() if args.revoke_sessions else ""
+    print("console password set")
+    if revoked:
+        print("all sessions signed out; restart the service for it to take effect")
+
+
+def cmd_admin_forget_password(args) -> None:
+    maintenance.clear_password()
+    maintenance.revoke_sessions()
+    print("password cleared and sessions signed out; the next visit runs first-time setup")
+    print("restart the service so the new session key is picked up: osmctl service restart")
+
+
+def cmd_admin_revoke(args) -> None:
+    maintenance.revoke_sessions()
+    print("session key rotated; everyone signed out (restart the service to apply)")
+
+
+def cmd_admin_show(args) -> None:
+    from app.config import BIN_DIR, DATA_DIR, HELM_CHART_DIR, KUBECONFIG_DIR, LOG_DIR, ROOT
+    state = store.load()
+    rows = [
+        {"item": "application root", "value": str(ROOT)},
+        {"item": "data", "value": str(DATA_DIR)},
+        {"item": "kubeconfigs", "value": str(KUBECONFIG_DIR)},
+        {"item": "repctl store", "value": str(replication.store_dir())},
+        {"item": "charts", "value": str(HELM_CHART_DIR)},
+        {"item": "tools", "value": str(BIN_DIR)},
+        {"item": "job logs", "value": str(LOG_DIR)},
+        {"item": "password set", "value": "yes" if state["setup"].get("admin_password_hash") else "NO"},
+        {"item": "single sign-on", "value": "on" if state["setup"]["oidc"]["enabled"] else "off"},
+        {"item": "alerts", "value": "on" if state["setup"]["alerts"]["enabled"] else "off"},
+        {"item": "service", "value": maintenance.service("is-active")[1]},
+        {"item": "listening on 8800", "value": "yes" if maintenance.listening() else "no"},
+    ]
+    table(rows, ["item", "value"])
+
+
+def cmd_admin_reset(args) -> None:
+    if not args.yes:
+        answer = input(f"clear {args.scope}? type reset: ").strip().lower()
+        if answer != "reset":
+            raise SystemExit("cancelled")
+    from app.config import KUBECONFIG_DIR
+    import shutil as _shutil
+    if args.scope == "everything":
+        maintenance.clear_password()
+        maintenance.revoke_sessions()
+    store.update(lambda s: s.update({"clusters": {}, "arrays": {}, "installs": {}, "jobs": []}))
+    for path in (KUBECONFIG_DIR, replication.REPCTL_HOME):
+        if path.exists():
+            _shutil.rmtree(path, ignore_errors=True)
+    inventory.invalidate()
+    print("cleared; nothing was uninstalled from any cluster or array")
+
+
+def cmd_admin_backup(args) -> None:
+    path = maintenance.backup(Path(args.out) if args.out else None)
+    print(f"written {path}")
+    for name in maintenance.backup_contents(path):
+        print("  " + name)
+
+
+def cmd_admin_restore(args) -> None:
+    try:
+        restored = maintenance.restore(Path(args.file), force=args.force)
+    except (FileNotFoundError, RuntimeError) as exc:
+        die(str(exc))
+    print(f"restored {len(restored)} entries from {args.file}")
+    print("restart the service: osmctl service restart")
+
+
+def cmd_doctor(args) -> None:
+    checks = maintenance.doctor()
+    area = None
+    bad = 0
+    for c in checks:
+        if c["area"] != area:
+            area = c["area"]
+            print(f"\n{area}")
+        mark = "ok  " if c["ok"] else "FAIL"
+        if not c["ok"]:
+            bad += 1
+        print(f"  {mark} {c['what']:<38} {c['detail'][:70]}")
+        if not c["ok"] and c["fix"]:
+            print(f"       fix: {c['fix']}")
+    print(f"\n{len(checks) - bad} passed, {bad} failed")
+    raise SystemExit(1 if bad else 0)
+
+
+def cmd_service(args) -> None:
+    if args.action == "logs":
+        raise SystemExit(maintenance.service_logs(args.lines, args.follow))
+    code, out = maintenance.service(args.action)
+    if out:
+        print(out)
+    raise SystemExit(code)
+
+
+def cmd_jobs(args) -> None:
+    rows = maintenance.job_logs(args.limit)
+    if args.show:
+        match = [r for r in rows if args.show in r["file"]]
+        if not match:
+            die(f"no job log matching {args.show}")
+        print(Path(match[0]["path"]).read_text())
+        return
+    table(rows, ["when", "kind", "size", "file"])
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="osmctl", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("status", help="tools, clusters, arrays and the repctl store").set_defaults(
+        func=cmd_status)
+
+    c = sub.add_parser("cluster", help="Kubernetes clusters").add_subparsers(
+        dest="sub", required=True)
+    a = c.add_parser("add", help="add a cluster by kubeconfig or login")
+    a.add_argument("--id", required=True)
+    a.add_argument("--kubeconfig")
+    a.add_argument("--server")
+    a.add_argument("--user", default="kubeadmin")
+    a.add_argument("--password")
+    a.add_argument("--role", default="source", choices=["source", "target"])
+    a.add_argument("--namespace", default=DRIVER_NAMESPACE_DEFAULT)
+    a.add_argument("--verify-tls", action="store_true")
+    a.set_defaults(func=cmd_cluster_add)
+    c.add_parser("list", help="clusters this console knows").set_defaults(func=cmd_cluster_list)
+    r = c.add_parser("rbac", help="what the stored identity may do")
+    r.add_argument("--id", required=True)
+    r.set_defaults(func=cmd_cluster_rbac)
+    sa = c.add_parser("serviceaccount", help="create a service account kubeconfig")
+    sa.add_argument("--id", required=True)
+    sa.add_argument("--name", default=k8s.SA_NAME)
+    sa.add_argument("--namespace", default=k8s.SA_NAMESPACE)
+    sa.add_argument("--role", default=k8s.SA_CLUSTER_ROLE)
+    sa.set_defaults(func=cmd_cluster_sa)
+    rm = c.add_parser("remove", help="forget a cluster")
+    rm.add_argument("--id", required=True)
+    rm.set_defaults(func=cmd_cluster_remove)
+
+    ar = sub.add_parser("array", help="PowerScale arrays").add_subparsers(dest="sub", required=True)
+    aa = ar.add_parser("add")
+    aa.add_argument("--endpoint", required=True)
+    aa.add_argument("--user", required=True)
+    aa.add_argument("--password")
+    aa.add_argument("--port", type=int, default=8080)
+    aa.add_argument("--path", default="/ifs/data/csi")
+    aa.add_argument("--zone", default="System")
+    aa.add_argument("--default", action="store_true")
+    aa.add_argument("--create-path", action="store_true")
+    aa.add_argument("--verify-tls", action="store_true")
+    aa.set_defaults(func=cmd_array_add)
+    ar.add_parser("list").set_defaults(func=cmd_array_list)
+
+    d = sub.add_parser("driver", help="the CSI driver").add_subparsers(dest="sub", required=True)
+    di = d.add_parser("install")
+    di.add_argument("--cluster", required=True)
+    di.add_argument("--method", default="helm", choices=["helm", "operator"])
+    di.add_argument("--mode", default="standalone", choices=["standalone", "replication"])
+    di.add_argument("--namespace")
+    di.add_argument("--default-array")
+    di.add_argument("--zone", default="System")
+    di.add_argument("--path", default="/ifs/data/csi")
+    di.add_argument("--port", type=int, default=8080)
+    di.add_argument("--auth-type", type=int, default=1)
+    di.add_argument("--replicas", type=int, default=2)
+    di.add_argument("--package")
+    di.add_argument("--channel")
+    di.add_argument("--upgrade", action="store_true")
+    di.add_argument("--no-quota", action="store_true")
+    di.add_argument("--no-snapshots", action="store_true")
+    di.add_argument("--verify-tls", action="store_true")
+    di.set_defaults(func=cmd_driver_install)
+    du = d.add_parser("uninstall")
+    du.add_argument("--cluster", required=True)
+    du.add_argument("--namespace")
+    du.set_defaults(func=cmd_driver_uninstall)
+
+    s = sub.add_parser("sc", help="storage classes").add_subparsers(dest="sub", required=True)
+    sc = s.add_parser("create")
+    sc.add_argument("--name", default="isilon")
+    sc.add_argument("--cluster", required=True)
+    sc.add_argument("--array", required=True)
+    sc.add_argument("--zone", default="System")
+    sc.add_argument("--path", default="/ifs/data/csi")
+    sc.add_argument("--nfs-address")
+    sc.add_argument("--reclaim", default="Delete", choices=["Delete", "Retain"])
+    sc.add_argument("--binding", default="Immediate",
+                    choices=["Immediate", "WaitForFirstConsumer"])
+    sc.add_argument("--root-client", action="store_true")
+    sc.add_argument("--replicated", action="store_true")
+    sc.add_argument("--target-cluster")
+    sc.add_argument("--target-array")
+    sc.add_argument("--target-nfs-address")
+    sc.add_argument("--rpo", default="Five_Minutes", choices=installer.RPO_VALUES)
+    sc.add_argument("--volume-group-prefix", default="csi-prod")
+    sc.add_argument("--ignore-namespaces", action="store_true")
+    sc.set_defaults(func=cmd_sc_create)
+
+    rp = sub.add_parser("repctl", help="repctl, with the console's state")
+    rpsub = rp.add_subparsers(dest="sub", required=True)
+    rpsub.add_parser("register", help="repctl cluster add for every known cluster").set_defaults(
+        func=cmd_repctl_register)
+    su = rpsub.add_parser("setup", help="controllers, register, inject, configure")
+    su.add_argument("--source", required=True)
+    su.add_argument("--target", required=True)
+    su.add_argument("--admin-configs", action="store_true",
+                    help="inject admin kubeconfigs instead of service account tokens")
+    su.set_defaults(func=cmd_repctl_setup)
+    pt = rpsub.add_parser("run", help="pass arguments straight to repctl")
+    pt.add_argument("args", nargs=argparse.REMAINDER)
+    pt.set_defaults(func=cmd_repctl_passthrough)
+
+    t = sub.add_parser("tools", help="installer tools").add_subparsers(dest="sub", required=True)
+    ti = t.add_parser("install-repctl")
+    ti.add_argument("--url")
+    ti.add_argument("--file")
+    ti.add_argument("--build", action="store_true")
+    ti.add_argument("--version", default="v1.15.0")
+    ti.set_defaults(func=cmd_tools_install_repctl)
+
+    ad = sub.add_parser("admin", help="the console itself").add_subparsers(dest="sub", required=True)
+    pw = ad.add_parser("passwd", help="set or reset the console password")
+    pw.add_argument("--password", help="otherwise prompted, or OSM_ADMIN_PASSWORD")
+    pw.add_argument("--revoke-sessions", action="store_true",
+                    help="also sign out every open session")
+    pw.set_defaults(func=cmd_admin_passwd)
+    fp = ad.add_parser("forget-password",
+                       help="remove the password so the next visit sets a new one")
+    fp.set_defaults(func=cmd_admin_forget_password)
+    ad.add_parser("revoke-sessions", help="sign everyone out").set_defaults(func=cmd_admin_revoke)
+    ad.add_parser("show", help="paths and settings at a glance").set_defaults(func=cmd_admin_show)
+    rs = ad.add_parser("reset", help="clear clusters, arrays and stored credentials")
+    rs.add_argument("--scope", default="inventory", choices=["inventory", "everything"])
+    rs.add_argument("--yes", action="store_true")
+    rs.set_defaults(func=cmd_admin_reset)
+    bk = ad.add_parser("backup", help="archive state, kubeconfigs, repctl store and secrets")
+    bk.add_argument("--out")
+    bk.set_defaults(func=cmd_admin_backup)
+    rt = ad.add_parser("restore", help="restore such an archive")
+    rt.add_argument("--file", required=True)
+    rt.add_argument("--force", action="store_true", help="overwrite existing state")
+    rt.set_defaults(func=cmd_admin_restore)
+
+    sub.add_parser("doctor", help="check tools, paths, permissions, clusters and arrays").set_defaults(
+        func=cmd_doctor)
+
+    sv = sub.add_parser("service", help="the systemd unit")
+    sv.add_argument("action", choices=["start", "stop", "restart", "status", "logs"])
+    sv.add_argument("--lines", type=int, default=50)
+    sv.add_argument("--follow", action="store_true")
+    sv.set_defaults(func=cmd_service)
+
+    jb = sub.add_parser("jobs", help="what the console has run")
+    jb.add_argument("--limit", type=int, default=20)
+    jb.add_argument("--show", help="print one job log, by job id or file name")
+    jb.set_defaults(func=cmd_jobs)
+
+    g = sub.add_parser("rg", help="replication groups").add_subparsers(dest="sub", required=True)
+    g.add_parser("list").set_defaults(func=cmd_rg_list)
+    for name in replication.ACTIONS:
+        ac = g.add_parser(name, help=replication.ACTIONS[name]["help"])
+        ac.add_argument("--rg", required=True)
+        ac.add_argument("--target", help="cluster id, for failover, failback and reprotect")
+        ac.add_argument("--unplanned", action="store_true")
+        ac.add_argument("--discard", action="store_true")
+        ac.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+        ac.set_defaults(func=cmd_rg_action, action=name)
+    return p
+
+
+if __name__ == "__main__":
+    parser = build_parser()
+    parsed = parser.parse_args()
+    parsed.func(parsed)

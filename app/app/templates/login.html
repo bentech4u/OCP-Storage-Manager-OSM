@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - {{ app_name }}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/app.js" defer></script>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="card login-card">
+    <div class="brand">
+      <div class="logo">OSM</div>
+      <div><div class="name">{{ app_name }}</div><div class="sub">{{ tagline }}</div></div>
+    </div>
+    {% if error %}<div class="banner bad"><span>⚠</span><div>{{ error }}</div></div>{% endif %}
+    {% if first_run %}
+      <div class="banner"><span>👋</span><div>First start. Choose the administrator password for this console.</div></div>
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="field"><label for="password">New password</label>
+          <input id="password" type="password" name="password" required minlength="8" autofocus>
+          <div class="hint">At least 8 characters. Stored as a bcrypt hash in the data directory.</div></div>
+        <div class="field"><label for="confirm">Repeat password</label>
+          <input id="confirm" type="password" name="confirm" required minlength="8"></div>
+        <button class="btn primary" style="width:100%">Create account and sign in</button>
+      </form>
+    {% else %}
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="field"><label for="password">Administrator password</label>
+          <input id="password" type="password" name="password" required autofocus></div>
+        <button class="btn primary" style="width:100%">Sign in</button>
+      </form>
+      {% if oidc.enabled %}
+        <div style="text-align:center;margin:.9rem 0 .2rem" class="muted small">or</div>
+        <a class="btn" style="width:100%" href="/auth/oidc/login">Sign in with {{ oidc.provider|capitalize }}</a>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

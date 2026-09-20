@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% block title %}Install and Configure - {{ app_name }}{% endblock %}
+{% block crumbs %}Install &amp; Configure{% endblock %}
+{% block heading %}Install and configure the driver{% endblock %}
+{% block content %}
+{% if notice %}<div class="banner ok"><span>✓</span><div>{{ notice }}</div></div>{% endif %}
+{% if error %}<div class="banner bad"><span>⚠</span><div>{{ error }}</div></div>{% endif %}
+
+<div class="steps">
+  <div class="step {{ 'done' if tools.repctl.found else 'todo' }}"><span class="n">1</span> Tools</div>
+  <div class="step {{ 'done' if clusters else 'todo' }}"><span class="n">2</span> Clusters</div>
+  <div class="step {{ 'done' if arrays else 'todo' }}"><span class="n">3</span> Arrays</div>
+  <div class="step {{ 'done' if state.installs else 'todo' }}"><span class="n">4</span> Driver</div>
+  <div class="step todo"><span class="n">5</span> Storage classes</div>
+  <div class="step todo"><span class="n">6</span> Replication</div>
+</div>
+
+<div id="output"></div>
+
+<!-- 1. tools -->
+<section class="section" id="tools">
+  <div class="card">
+    <div class="card-head"><div><h2>1. Installer tools</h2>
+      <div class="sub">repctl drives every replication action. helm and oc are used for the installs.</div></div>
+    </div>
+    <div class="grid cols-4" style="margin-bottom:1rem">
+      {% for name, t in tools.items() %}
+      <div>
+        <strong>{{ name }}</strong>
+        {% if t.found %}<span class="pill ok"><span class="dot"></span>ready</span>
+        {% else %}<span class="pill bad"><span class="dot"></span>missing</span>{% endif %}
+        <div class="small muted truncate" title="{{ t.path }}">{{ t.version or "not installed" }}</div>
+        <div class="small mono muted truncate" title="{{ t.path }}">{{ t.path }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <form hx-post="/install/repctl" hx-target="#output" hx-encoding="multipart/form-data" hx-swap="innerHTML">
+      <div class="choices" style="margin-bottom:.9rem">
+        <label class="choice"><input type="radio" name="source" value="download" checked>
+          <div class="title">Download from Dell's GitHub</div>
+          <div class="desc">Fetches the published Linux binary. Needs internet on this host.</div></label>
+        <label class="choice"><input type="radio" name="source" value="upload">
+          <div class="title">Upload a binary</div>
+          <div class="desc">For disconnected hosts. Browse to a repctl binary you already have.</div></label>
+        <label class="choice"><input type="radio" name="source" value="build">
+          <div class="title">Build from source</div>
+          <div class="desc">Uses podman and the Go toolchain. Needed for tags with no published binary.</div></label>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Release</label>
+          <div hx-get="/install/repctl/releases" hx-trigger="load" hx-swap="innerHTML">
+            <select name="url"><option value="{{ repctl_default.url }}">{{ repctl_default.version }}</option></select>
+          </div>
+          <div class="hint">v1.15.0 and v1.14.0 publish no binary; pick v1.13.0 or build from source.</div>
+        </div>
+        <div class="field">
+          <label>Or choose a file</label>
+          <input type="file" name="binary" accept="*/*">
+          <div class="hint">The file is checked for a Linux ELF header and then run with --help.</div>
+        </div>
+      </div>
+      <input type="hidden" name="version" value="v1.15.0">
+      <button class="btn primary">Install repctl</button>
+    </form>
+    <div hx-get="/install/repctl/clusters" hx-trigger="load, refresh"
+         data-refresh-on-job="1"></div>
+  </div>
+</section>
+
+<!-- 2. clusters -->
+<section class="section" id="clusters">
+  <div class="card">
+    <div class="card-head"><div><h2>2. Kubernetes clusters</h2>
+      <div class="sub">Add the primary and the disaster recovery cluster. repctl copies each kubeconfig into its own store.</div></div></div>
+
+    <table>
+      <thead><tr><th>Cluster</th><th>Role</th><th>API server</th><th>Credentials</th><th>Namespace</th><th></th></tr></thead>
+      <tbody>
+      {% for c in clusters %}
+        <tr>
+          <td><strong>{{ c.id }}</strong><div class="small muted">added {{ c.added|ago }}</div></td>
+          <td><span class="pill {{ 'info' if c.role == 'source' else 'mute' }}">{{ c.role }}</span></td>
+          <td class="small truncate">{{ c.server }}</td>
+          <td class="small">
+            {% if c.service_account_kubeconfig %}
+              <span class="pill ok"><span class="dot"></span>service account</span>
+              <div class="muted">{{ c.sa_namespace }}/{{ c.sa_name }} as {{ c.sa_role }}</div>
+            {% else %}<span class="pill warn"><span class="dot"></span>{{ c.connected_via or "kubeconfig" }}</span>
+              {% if c.connected_as %}<div class="muted truncate">{{ c.connected_as }}</div>{% endif %}{% endif %}
+          </td>
+          <td class="small">{{ c.namespace }}</td>
+          <td class="right nowrap">
+            <button class="btn sm" hx-get="/install/clusters/{{ c.id }}/rbac" hx-target="#output">Check access</button>
+            <button class="btn sm" hx-post="/install/clusters/{{ c.id }}/serviceaccount" hx-target="#output"
+              data-confirm="Create a service account with a non-expiring token on {{ c.id }}?">Export service account</button>
+            <button class="btn sm danger" hx-post="/install/clusters/{{ c.id }}/delete" hx-target="body"
+              data-confirm="Remove {{ c.id }} from the console? Nothing is uninstalled.">Remove</button>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="empty">No clusters yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <form hx-post="/install/clusters" hx-target="body" hx-encoding="multipart/form-data" style="margin-top:1rem">
+      <fieldset><legend>Add a cluster</legend>
+        <div class="row three">
+          <div class="field"><label>Cluster id</label>
+            <input type="text" name="cluster_id" placeholder="cluster-1" required>
+            <div class="hint">repctl uses this name, and it must match remoteClusterID in the storage class.</div></div>
+          <div class="field"><label>Role</label>
+            <select name="role"><option value="source">source, primary site</option>
+              <option value="target">target, disaster recovery</option></select></div>
+          <div class="field"><label>Driver namespace</label>
+            <input type="text" name="namespace" value="{{ namespace_default }}"></div>
+        </div>
+
+        <div class="choices" style="margin-bottom:.9rem">
+          <label class="choice"><input type="radio" name="connect_via" value="login" checked>
+            <div class="title">Sign in with a user</div>
+            <div class="desc">kubeadmin, or any account with administrator rights. The console exchanges
+              the password for a token and never stores the password.</div></label>
+          <label class="choice"><input type="radio" name="connect_via" value="file">
+            <div class="title">Upload a kubeconfig</div>
+            <div class="desc">Any working kubeconfig file from your workstation.</div></label>
+          <label class="choice"><input type="radio" name="connect_via" value="path">
+            <div class="title">Path on this host</div>
+            <div class="desc">A kubeconfig that already exists on the installer host.</div></label>
+        </div>
+
+        <div class="row three">
+          <div class="field"><label>API address</label>
+            <input type="text" name="api_server" placeholder="https://api.cluster.example.com:6443">
+            <div class="hint">The API address, not the web console. A bare name, an IP, or a pasted
+              console address all work; the port defaults to 6443.</div></div>
+          <div class="field"><label>User</label>
+            <input type="text" name="username" placeholder="kubeadmin" autocomplete="off"></div>
+          <div class="field"><label>Password</label>
+            <input type="password" name="password" autocomplete="new-password"></div>
+        </div>
+        <div class="check"><input type="checkbox" id="insec" name="insecure" checked>
+          <label for="insec">Accept the cluster's certificate without checking it</label></div>
+
+        <div class="row">
+          <div class="field"><label>Kubeconfig file</label>
+            <input type="file" name="kubeconfig_file"></div>
+          <div class="field"><label>Kubeconfig path on this host</label>
+            <input type="text" name="kubeconfig_path_in" placeholder="/root/.kube/config"></div>
+        </div>
+        <p class="small muted">Whichever route you choose, the identity needs cluster-admin, because
+          the installer creates custom resource definitions and cluster roles. Use <em>Export service
+          account</em> afterwards so later actions run with a token that does not expire.</p>
+        <button class="btn primary">Add cluster</button>
+      </fieldset>
+    </form>
+  </div>
+</section>
+
+<!-- 3. arrays -->
+<section class="section" id="arrays">
+  <div class="card">
+    <div class="card-head"><div><h2>3. PowerScale arrays</h2>
+      <div class="sub">Every cluster's credentials secret lists every array, which is what replication requires.</div></div></div>
+    <table>
+      <thead><tr><th>Array</th><th>Endpoint</th><th>OneFS</th><th>Base path</th><th>SyncIQ certificate</th><th></th></tr></thead>
+      <tbody>
+      {% for a in arrays %}
+        <tr>
+          <td><strong>{{ a.name }}</strong>{% if a.is_default %} <span class="pill info">default</span>{% endif %}</td>
+          <td class="small">{{ a.endpoint }}:{{ a.port }}<div class="muted">{{ a.username }}</div></td>
+          <td class="small">{{ a.onefs_version }}</td>
+          <td class="small">{{ a.isi_path }}
+            {% if not a.path_ok %}<span class="pill warn">missing</span>{% endif %}</td>
+          <td class="small mono truncate" title="{{ a.replication_certificate_id }}">
+            {{ a.replication_certificate_id[:16] ~ "..." if a.replication_certificate_id else "none" }}</td>
+          <td class="right"><button class="btn sm danger" hx-post="/install/arrays/{{ a.id }}/delete"
+            hx-target="body" data-confirm="Remove {{ a.name }}?">Remove</button></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="empty">No arrays yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <form hx-post="/install/arrays" hx-target="body" style="margin-top:1rem">
+      <fieldset><legend>Add an array</legend>
+        <div class="row three">
+          <div class="field"><label>Endpoint</label><input type="text" name="endpoint" placeholder="192.168.68.140" required></div>
+          <div class="field"><label>Port</label><input type="number" name="port" value="8080"></div>
+          <div class="field"><label>Access zone</label><input type="text" name="access_zone" value="System"></div>
+        </div>
+        <div class="row three">
+          <div class="field"><label>User</label><input type="text" name="username" placeholder="csiuser" required></div>
+          <div class="field"><label>Password</label><input type="password" name="password" required></div>
+          <div class="field"><label>Base path</label><input type="text" name="isi_path" value="/ifs/data/csi"></div>
+        </div>
+        <div class="check"><input type="checkbox" id="skipcert" name="skip_cert_validation" checked>
+          <label for="skipcert">Skip certificate validation, the usual choice for a self signed array</label></div>
+        <div class="check"><input type="checkbox" id="isdef" name="is_default">
+          <label for="isdef">Treat as the default array</label></div>
+        <div class="check"><input type="checkbox" id="mkpath" name="create_path" checked>
+          <label for="mkpath">Create the base path if it is missing</label></div>
+        <button class="btn primary">Add array</button>
+      </fieldset>
+    </form>
+  </div>
+</section>
+
+<!-- 4. driver -->
+<section class="section" id="driver">
+  <div class="card">
+    <div class="card-head"><div><h2>4. Install the driver</h2>
+      <div class="sub">Choose the install method and whether this site takes part in replication.</div></div></div>
+    <form hx-post="/install/driver" hx-target="#output">
+      <div class="choices" style="margin-bottom:1rem">
+        <label class="choice"><input type="radio" name="method" value="operator" checked>
+          <div class="title">Dell CSM Operator</div>
+          <div class="desc">Subscribes to the operator from OperatorHub and creates a ContainerStorageModule.
+            This is the path Dell documents for OpenShift.</div></label>
+        <label class="choice"><input type="radio" name="method" value="helm">
+          <div class="title">Helm chart</div>
+          <div class="desc">Installs the vendored csi-isilon chart directly. Works offline and is easy to inspect.</div></label>
+      </div>
+      <div class="choices" style="margin-bottom:1rem">
+        <label class="choice"><input type="radio" name="mode" value="standalone" checked>
+          <div class="title">Standalone</div>
+          <div class="desc">Provisioning, snapshots and expansion against one array. No replication sidecar.</div></label>
+        <label class="choice"><input type="radio" name="mode" value="replication">
+          <div class="title">With replication</div>
+          <div class="desc">Adds the replicator sidecar and the replication custom resource definitions.</div></label>
+      </div>
+      <div class="row three">
+        <div class="field"><label>Cluster</label>
+          <select name="cluster_id" required>
+            {% for c in clusters %}<option value="{{ c.id }}">{{ c.id }} - {{ c.server }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label>Namespace</label><input type="text" name="namespace" value="{{ namespace_default }}"></div>
+        <div class="field"><label>Default array for this site</label>
+          <select name="default_array">
+            {% for a in arrays %}<option value="{{ a.id }}">{{ a.name }} ({{ a.endpoint }})</option>{% endfor %}
+          </select></div>
+      </div>
+      <div class="row three">
+        <div class="field"><label>Access zone</label><input type="text" name="access_zone" value="System"></div>
+        <div class="field"><label>Base path</label><input type="text" name="isi_path" value="/ifs/data/csi"></div>
+        <div class="field"><label>Controller replicas</label><input type="number" name="controller_count" value="2" min="1" max="3"></div>
+      </div>
+      <div class="row three">
+        <div class="field"><label>Authentication type</label>
+          <select name="auth_type"><option value="1" selected>session, required by OneFS 9.15</option>
+            <option value="0">basic</option></select></div>
+        <div class="field"><label>Array API port</label><input type="number" name="endpoint_port" value="8080"></div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <div>
+            <div class="check"><input type="checkbox" id="quota" name="enable_quota" checked><label for="quota">Quotas</label></div>
+            <div class="check"><input type="checkbox" id="snaps" name="snapshots" checked><label for="snaps">Snapshots</label></div>
+          </div>
+        </div>
+      </div>
+      <div class="check"><input type="checkbox" id="skipval" name="skip_cert_validation" checked>
+        <label for="skipval">Skip array certificate validation</label></div>
+      <div class="check"><input type="checkbox" id="ocp" name="openshift" checked>
+        <label for="ocp">OpenShift cluster, add the security context constraints</label></div>
+      <div class="check"><input type="checkbox" id="upg" name="upgrade">
+        <label for="upg">Upgrade if the release already exists</label></div>
+      <div class="btn-row" style="margin-top:.8rem">
+        <button class="btn primary">Install driver</button>
+        <button class="btn danger" hx-post="/install/driver/uninstall" hx-target="#output"
+          hx-include="[name=cluster_id]" data-confirm="Uninstall the driver from the selected cluster?">Uninstall</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<!-- 5. storage classes -->
+<section class="section" id="storageclass">
+  <div class="card">
+    <div class="card-head"><div><h2>5. Storage classes</h2>
+      <div class="sub">A plain class for standalone use, or a mirrored pair for replication.</div></div></div>
+    <form hx-post="/install/storageclass" hx-target="#output">
+      <div class="row three">
+        <div class="field"><label>Name</label><input type="text" name="name" value="isilon"></div>
+        <div class="field"><label>Cluster</label>
+          <select name="source_cluster">{% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Array</label>
+          <select name="array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+      </div>
+      <div class="row three">
+        <div class="field"><label>Access zone</label><input type="text" name="access_zone" value="System"></div>
+        <div class="field"><label>Base path</label><input type="text" name="isi_path" value="/ifs/data/csi"></div>
+        <div class="field"><label>NFS address</label><input type="text" name="az_service_ip" placeholder="defaults to the array endpoint"></div>
+      </div>
+      <div class="check"><input type="checkbox" id="rep" name="replicated">
+        <label for="rep">Replicated pair, created on both clusters</label></div>
+      <fieldset style="margin-top:.6rem"><legend>Replication settings</legend>
+        <div class="row three">
+          <div class="field"><label>Target cluster</label>
+            <select name="target_cluster">{% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Target array</label>
+            <select name="target_array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Recovery point objective</label>
+            <select name="rpo">
+              <option>Five_Minutes</option><option>Fifteen_Minutes</option><option>Thirty_Minutes</option>
+              <option>One_Hour</option><option>Six_Hours</option><option>Twelve_Hours</option><option>One_Day</option>
+            </select></div>
+        </div>
+        <div class="row three">
+          <div class="field"><label>Volume group prefix</label><input type="text" name="volume_group_prefix" value="csi-prod">
+            <div class="hint">Prefix, namespace, address and objective must stay under 63 characters.</div></div>
+          <div class="field"><label>Target NFS address</label><input type="text" name="target_az_service_ip" placeholder="defaults to the target array endpoint"></div>
+          <div class="field" style="display:flex;align-items:flex-end">
+            <div class="check"><input type="checkbox" id="ignorens" name="ignore_namespaces">
+              <label for="ignorens">One volume group for all namespaces</label></div></div>
+        </div>
+      </fieldset>
+      <button class="btn primary">Create storage class</button>
+    </form>
+  </div>
+</section>
+
+<!-- 6. replication wiring -->
+<section class="section" id="replication">
+  <div class="card">
+    <div class="card-head"><div><h2>6. Wire the two clusters together</h2>
+      <div class="sub">Installs the replication controller on both sites, registers them with repctl and exchanges their configurations.</div></div></div>
+    <form hx-post="/install/replication/setup" hx-target="#output">
+      <div class="row three">
+        <div class="field"><label>Primary cluster</label>
+          <select name="source_cluster" hx-get="/install/replication/preflight" hx-target="#preflight"
+                  hx-include="closest form" hx-trigger="change, load">
+            {% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Disaster recovery cluster</label>
+          <select name="target_cluster" hx-get="/install/replication/preflight" hx-target="#preflight"
+                  hx-include="closest form" hx-trigger="change">
+            {% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select></div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <div class="check"><input type="checkbox" id="usesa" name="use_sa" checked>
+            <label for="usesa">Use service account tokens, not admin kubeconfigs</label></div></div>
+      </div>
+      <div id="preflight" class="small"></div>
+      <button class="btn primary" style="margin-top:.7rem">Set up replication</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

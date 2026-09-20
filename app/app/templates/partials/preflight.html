@@ -1,0 +1,32 @@
+<div class="card" style="margin-top:.6rem">
+  <div class="card-head"><h3>Before wiring the sites</h3>
+    <span class="sub">checks that the service account route and the peer link will work</span></div>
+  <div class="grid cols-2">
+    <div>
+      <table>
+        <tbody>
+        {% for c in checks %}
+          <tr><td class="small">{{ c.what }}</td>
+            <td class="small muted">{{ c.detail }}</td>
+            <td class="right">{% if c.ok %}<span class="pill ok">ok</span>
+              {% else %}<span class="pill warn">fix</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <table>
+        <thead><tr><th>API reachability from this host</th><th class="right"></th></tr></thead>
+        <tbody>
+        {% for r in reach %}
+          <tr><td class="small">{{ r.cluster }}<div class="muted">{{ r.detail }}</div></td>
+            <td class="right">{% if r.ok %}<span class="pill ok">reachable</span>
+              {% else %}<span class="pill bad">blocked</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="small muted">Each replication controller must also reach the other cluster's API server
+        from inside its pods. When only a name fails to resolve, add a host alias to the controller deployment.</p>
+    </div>
+  </div>
+</div>

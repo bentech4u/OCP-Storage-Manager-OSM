@@ -1,0 +1,9 @@
+Authlib==1.8.0
+bcrypt==5.0.0
+fastapi==0.141.1
+httpx==0.28.1
+itsdangerous==2.2.0
+Jinja2==3.1.6
+python-multipart==0.0.32
+PyYAML==6.0.3
+uvicorn==0.53.0

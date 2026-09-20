@@ -1,0 +1,16 @@
+<div class="card" id="console-card">
+  <div class="card-head">
+    <div>
+      <h3>{{ job.title }}</h3>
+      <div class="sub mono">job {{ job.id }} &middot; started {{ job.started|ago }}</div>
+    </div>
+    <span id="job-status-{{ job.id }}" class="pill {{ 'info' if job.status == 'running' else ('ok' if job.status == 'ok' else 'bad') }}">
+      {% if job.status == 'running' %}<span class="spin"></span> running{% else %}{{ job.status }}{% endif %}
+    </span>
+  </div>
+  <div class="console" id="console-{{ job.id }}">{% for line in job.lines %}<div
+    {% if line.startswith('$ ') %}class="cmd"{% endif %}>{{ line }}</div>{% endfor %}</div>
+  {% if follow %}
+  <script>followJob("{{ job.id }}", "console-{{ job.id }}", "job-status-{{ job.id }}");</script>
+  {% endif %}
+</div>

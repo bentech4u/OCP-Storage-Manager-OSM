@@ -1,0 +1,15 @@
+# console state: array passwords, kubeconfigs, tokens, logs
+data/
+.repctl/
+.kube/
+# lab secrets
+secrets/
+# tool binaries and the virtual environment
+bin/
+app/.venv/
+# python
+**/__pycache__/
+*.pyc
+# shell
+.bash_history
+.bash_profile

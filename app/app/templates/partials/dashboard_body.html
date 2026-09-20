@@ -1,0 +1,110 @@
+<div class="grid cols-4">
+  <div class="card stat">
+    <div class="label">Kubernetes clusters</div>
+    <div class="value">{{ data.counts.clusters_ok }}<span class="muted" style="font-size:1rem">/{{ data.counts.clusters }}</span></div>
+    <div class="trend">reachable right now</div>
+  </div>
+  <div class="card stat">
+    <div class="label">PowerScale arrays</div>
+    <div class="value">{{ data.counts.arrays_ok }}<span class="muted" style="font-size:1rem">/{{ data.counts.arrays }}</span></div>
+    <div class="trend">answering the Platform API</div>
+  </div>
+  <div class="card stat">
+    <div class="label">Drivers ready</div>
+    <div class="value">{{ data.counts.drivers_ok }}</div>
+    <div class="trend">controller pods healthy</div>
+  </div>
+  <div class="card stat">
+    <div class="label">Replication groups</div>
+    <div class="value">{{ data.counts.replication_groups }}</div>
+    <div class="trend">across all clusters</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="margin-top:1rem">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0"><h2>Clusters</h2>
+      <a class="small" href="/install#clusters">Manage</a></div>
+    <table>
+      <thead><tr><th>Cluster</th><th>Version</th><th>Driver</th><th>Storage classes</th></tr></thead>
+      <tbody>
+      {% for c in data.clusters %}
+        <tr>
+          <td><strong>{{ c.id }}</strong><div class="muted small truncate">{{ c.server }}</div></td>
+          <td class="small">
+            {% if c.reachable %}
+              {{ c.openshift_version or c.kubernetes_version }}
+              <div class="muted">{{ c.nodes_ready }}/{{ c.nodes }} nodes ready</div>
+            {% else %}<span class="pill bad"><span class="dot"></span>unreachable</span>{% endif %}
+          </td>
+          <td>
+            {% set d = c.driver or {} %}
+            {% if d.controller_ready and d.node_ready %}<span class="pill ok"><span class="dot"></span>running</span>
+            {% elif d.pods %}<span class="pill warn"><span class="dot"></span>partial</span>
+            {% else %}<span class="pill mute"><span class="dot"></span>not installed</span>{% endif %}
+            {% if d.replication_controller %}<div class="small muted">replication controller up</div>{% endif %}
+          </td>
+          <td class="small">
+            {% for sc in (c.driver or {}).storage_classes or [] %}
+              <div>{{ sc.name }}{% if sc.replicated %} <span class="pill info">RPO {{ sc.rpo or "-" }}</span>{% endif %}</div>
+            {% else %}<span class="muted">none</span>{% endfor %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="empty">No clusters yet. Add one on the Install page.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0"><h2>PowerScale arrays</h2>
+      <a class="small" href="/install#arrays">Manage</a></div>
+    <table>
+      <thead><tr><th>Array</th><th>OneFS</th><th>Licences</th><th>SyncIQ</th></tr></thead>
+      <tbody>
+      {% for a in data.arrays %}
+        <tr>
+          <td><strong>{{ a.name or a.id }}</strong><div class="muted small">{{ a.endpoint }}</div></td>
+          <td class="small">
+            {% if a.reachable %}{{ a.onefs_version }}<div class="muted">{{ a.nodes or 1 }} node(s)</div>
+            {% else %}<span class="pill bad"><span class="dot"></span>unreachable</span>{% endif %}
+          </td>
+          <td class="small">
+            {% for k, v in (a.licenses or {}).items() %}
+              <div><span class="muted">{{ k|lower }}</span>
+                {% if v in ("Licensed", "Evaluation", "Activated") %}<span class="pill ok">{{ v }}</span>
+                {% else %}<span class="pill warn">{{ v }}</span>{% endif %}</div>
+            {% endfor %}
+          </td>
+          <td class="small">
+            {% if a.synciq_service == "on" %}<span class="pill ok"><span class="dot"></span>on</span>
+            {% elif a.reachable %}<span class="pill mute"><span class="dot"></span>off</span>{% endif %}
+            {% if a.synciq_encryption_required %}<div class="muted">encryption required</div>{% endif %}
+            {% if a.policies %}<div class="muted">{{ a.policies|length }} policy(ies)</div>{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="empty">No arrays yet. Add one on the Install page.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <div class="card-head"><h2>Installer host tools</h2>
+    <span class="sub">everything the console shells out to</span></div>
+  <div class="grid cols-4">
+    {% for name, t in data.tools.items() %}
+      <div>
+        <div style="display:flex;align-items:center;gap:.45rem">
+          <strong>{{ name }}</strong>
+          {% if t.found %}<span class="pill ok"><span class="dot"></span>found</span>
+          {% else %}<span class="pill bad"><span class="dot"></span>missing</span>{% endif %}
+        </div>
+        <div class="small muted truncate" title="{{ t.path }}">{{ t.version or t.path or "not installed" }}</div>
+      </div>
+    {% endfor %}
+  </div>
+</div>

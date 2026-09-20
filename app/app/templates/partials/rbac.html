@@ -1,0 +1,25 @@
+<div class="card">
+  <div class="card-head">
+    <div><h3>Access check on {{ cluster.id }}</h3>
+      <div class="sub">using the {{ which }} kubeconfig &middot; {{ info.server or cluster.server }}</div></div>
+    {% if info.cluster_admin %}<span class="pill ok"><span class="dot"></span>cluster admin</span>
+    {% else %}<span class="pill warn"><span class="dot"></span>limited rights</span>{% endif %}
+  </div>
+  {% if error %}<div class="banner bad"><span>⚠</span><div>{{ error }}</div></div>{% endif %}
+  <p class="small">repctl installs custom resource definitions, cluster roles and secrets on both sites,
+    so the identity you give it needs cluster-admin or an equivalent role. The identity that the
+    replication controller later uses to reach its peer needs far less, only the replication manager role.</p>
+  <table>
+    <thead><tr><th>Permission</th><th>Needed for</th><th class="right">Result</th></tr></thead>
+    <tbody>
+      {% for r in report %}
+      <tr>
+        <td class="mono small">{{ r.verb }} {{ r.resource }}</td>
+        <td class="small muted">{{ r.why }}</td>
+        <td class="right">{% if r.ok %}<span class="pill ok">allowed</span>
+          {% else %}<span class="pill bad">denied</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

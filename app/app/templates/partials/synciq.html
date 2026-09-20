@@ -1,0 +1,28 @@
+{% for row in rows %}
+<div style="padding:.4rem 1.1rem 1rem">
+  <h3 style="margin-top:.6rem">{{ row.array }}</h3>
+  {% if row.error %}<div class="banner bad"><span>⚠</span><div>{{ row.error }}</div></div>{% endif %}
+  {% if row.policies %}
+  <table>
+    <thead><tr><th>Policy</th><th>Source</th><th>Target</th><th>Encrypted</th><th>Last job</th></tr></thead>
+    <tbody>
+      {% for p in row.policies %}
+      <tr>
+        <td class="small">{{ p.name }}</td>
+        <td class="small muted truncate">{{ p.source }}</td>
+        <td class="small muted">{{ p.target_host }}:{{ p.target_path }}</td>
+        <td>{% if p.encrypted %}<span class="pill ok">yes</span>{% else %}<span class="pill mute">no</span>{% endif %}</td>
+        <td>{% if p.last_job_state in ("finished", "running") %}<span class="pill ok">{{ p.last_job_state }}</span>
+            {% elif p.last_job_state %}<span class="pill bad">{{ p.last_job_state }}</span>
+            {% else %}<span class="muted small">never run</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif not row.error %}
+    <p class="small muted">No SyncIQ policies on this array yet. The driver creates one per volume group.</p>
+  {% endif %}
+</div>
+{% else %}
+<div class="empty">No arrays registered.</div>
+{% endfor %}

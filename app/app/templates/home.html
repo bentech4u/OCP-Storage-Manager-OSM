@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Home - {{ app_name }}{% endblock %}
+{% block crumbs %}Overview{% endblock %}
+{% block heading %}Dashboard{% endblock %}
+{% block topactions %}
+<button class="btn sm" hx-get="/partials/dashboard" hx-target="#dash" hx-swap="innerHTML">
+  <span class="spin htmx-indicator"></span> Refresh</button>
+{% endblock %}
+{% block content %}
+{% if warnings %}
+  {% for title, detail, link in warnings[:4] %}
+  <div class="banner warn">
+    <span>⚠</span>
+    <div><strong>{{ title }}</strong><div class="small muted">{{ detail }}</div></div>
+    <div class="spacer"></div><a class="btn sm" href="{{ link }}">Fix</a>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="banner ok"><span>✓</span><div>Every registered cluster and array is reachable and healthy.</div></div>
+{% endif %}
+
+<div id="dash">{% include "partials/dashboard_body.html" %}</div>
+
+<section class="section" id="jobs" style="margin-top:1.4rem">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0"><h2>Recent activity</h2>
+      <a class="small" href="/operations#jobs">All jobs</a></div>
+    <table>
+      <thead><tr><th>Task</th><th>Target</th><th>Started</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr>
+          <td>{{ j.title }}</td>
+          <td class="muted small">{{ j.cluster or "-" }}</td>
+          <td class="muted small nowrap">{{ j.started|ago }}</td>
+          <td><span class="pill {{ 'ok' if j.status == 'ok' else ('bad' if j.status == 'failed' else 'info') }}">
+            <span class="dot"></span>{{ j.status }}</span></td>
+          <td class="right"><a class="btn sm ghost" href="/operations?job={{ j.id }}#jobs">Log</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="empty">Nothing has run yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

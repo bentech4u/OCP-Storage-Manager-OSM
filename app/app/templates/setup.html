@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Setup - {{ app_name }}<section class="section">
+  <div class="card">
+    <div class="card-head"><div><h2>Start over</h2>
+      <div class="sub">clear what this console remembers, for a fresh site</div></div></div>
+    <p class="small">Nothing is uninstalled from any cluster or array. This only removes the records
+      kept here: clusters, arrays, stored kubeconfigs, service account tokens and repctl's state.</p>
+    <form hx-post="/setup/reset" hx-target="#output">
+      <div class="row three">
+        <div class="field"><label>How much to clear</label>
+          <select name="scope">
+            <option value="inventory">Clusters, arrays and kubeconfigs, keep my password and settings</option>
+            <option value="everything">Everything, including the administrator password</option>
+          </select></div>
+        <div class="field"><label>Type reset to confirm</label>
+          <input type="text" name="confirm" placeholder="reset" autocomplete="off"></div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <button class="btn danger" data-confirm="Clear the console's records?">Clear</button></div>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock %}
+{% block crumbs %}Setup{% endblock %}
+{% block heading %}Console settings{% endblock %}
+{% block content %}
+{% if notice %}<div class="banner ok"><span>✓</span><div>{{ notice }}</div></div>{% endif %}
+{% if error %}<div class="banner bad"><span>⚠</span><div>{{ error }}</div></div>{% endif %}
+<div id="output"></div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <div class="card-head"><div><h2>Administrator password</h2>
+      <div class="sub">signed in as {{ user }}</div></div></div>
+    {% if not password_set %}
+      <div class="banner warn"><span>⚠</span>
+        <div>This console has no password yet, so anyone reaching it can sign in.
+          Set one now.</div></div>
+    {% endif %}
+    <form hx-post="/setup/password" hx-target="body">
+      {% if password_set %}
+      <div class="field"><label>Current password</label><input type="password" name="current" required></div>
+      {% endif %}
+      <div class="row">
+        <div class="field"><label>New password</label><input type="password" name="new" minlength="8" required></div>
+        <div class="field"><label>Repeat</label><input type="password" name="confirm" minlength="8" required></div>
+      </div>
+      <button class="btn primary">{{ "Change password" if password_set else "Set password" }}</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div><h2>Where things are kept</h2>
+      <div class="sub">this console's own state</div></div></div>
+    <dl class="kv">
+      {% for label, path in paths.items() %}
+        <dt>{{ label }}</dt><dd class="mono small">{{ path }}</dd>
+      {% endfor %}
+    </dl>
+    <p class="small muted">Array passwords, kubeconfigs and service account tokens live in the data
+      directory with owner-only permissions. The repctl store is the one a shell sees too.</p>
+  </div>
+</div>
+
+<section class="section" style="margin-top:1rem">
+  <div class="card">
+    <div class="card-head"><div><h2>Single sign-on</h2>
+      <div class="sub">Microsoft Entra ID or any OpenID Connect provider</div></div></div>
+    <form hx-post="/setup/oidc" hx-target="body">
+      <div class="check"><input type="checkbox" id="oidcon" name="enabled" {% if setup.oidc.enabled %}checked{% endif %}>
+        <label for="oidcon">Offer single sign-on on the login page</label></div>
+      <div class="row three">
+        <div class="field"><label>Provider</label>
+          <select name="provider">
+            <option value="entra" {% if setup.oidc.provider == 'entra' %}selected{% endif %}>Microsoft Entra ID</option>
+            <option value="generic" {% if setup.oidc.provider == 'generic' %}selected{% endif %}>Other OpenID Connect</option>
+          </select></div>
+        <div class="field"><label>Directory (tenant) id</label>
+          <input type="text" name="tenant_id" value="{{ setup.oidc.tenant_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+          <div class="hint">The issuer is derived from this for Entra.</div></div>
+        <div class="field"><label>Issuer</label>
+          <input type="text" name="issuer" value="{{ setup.oidc.issuer }}" placeholder="https://login.microsoftonline.com/<tenant>/v2.0"></div>
+      </div>
+      <div class="row three">
+        <div class="field"><label>Application (client) id</label><input type="text" name="client_id" value="{{ setup.oidc.client_id }}"></div>
+        <div class="field"><label>Client secret</label><input type="password" name="client_secret" value="{{ setup.oidc.client_secret }}"></div>
+        <div class="field"><label>Redirect address</label>
+          <input type="text" name="redirect_url" value="{{ setup.oidc.redirect_url }}" placeholder="https://installer.bentech.work:8800/auth/oidc/callback"></div>
+      </div>
+      <div class="field"><label>Groups allowed to sign in</label>
+        <input type="text" name="allowed_groups" value="{{ setup.oidc.allowed_groups|join(', ') }}" placeholder="storage-admins, platform-team">
+        <div class="hint">Comma separated. Leave empty to allow anyone in the directory.</div></div>
+      <div class="btn-row">
+        <button class="btn primary">Save</button>
+        <button class="btn" hx-post="/setup/oidc/test" hx-target="#output">Test discovery</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<section class="section">
+  <div class="card">
+    <div class="card-head"><div><h2>Alerts</h2>
+      <div class="sub">where to send replication and driver problems</div></div></div>
+    <form hx-post="/setup/alerts" hx-target="body">
+      <div class="check"><input type="checkbox" id="alon" name="enabled" {% if setup.alerts.enabled %}checked{% endif %}>
+        <label for="alon">Send alerts</label></div>
+      <div class="row three">
+        <div class="field"><label>Mail server</label><input type="text" name="smtp_host" value="{{ setup.alerts.smtp_host }}" placeholder="smtp.bentech.work"></div>
+        <div class="field"><label>Port</label><input type="number" name="smtp_port" value="{{ setup.alerts.smtp_port }}"></div>
+        <div class="field"><label>From</label><input type="text" name="mail_from" value="{{ setup.alerts.mail_from }}" placeholder="osm@example.com"></div>
+      </div>
+      <div class="row three">
+        <div class="field"><label>User</label><input type="text" name="smtp_user" value="{{ setup.alerts.smtp_user }}"></div>
+        <div class="field"><label>Password</label><input type="password" name="smtp_password" value="{{ setup.alerts.smtp_password }}"></div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <div class="check"><input type="checkbox" id="tls" name="smtp_tls" {% if setup.alerts.smtp_tls %}checked{% endif %}>
+            <label for="tls">Use STARTTLS</label></div></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Send to</label>
+          <input type="text" name="mail_to" value="{{ setup.alerts.mail_to|join(', ') }}" placeholder="storage-team@bentech.work"></div>
+        <div class="field"><label>Webhook</label>
+          <input type="text" name="webhook_url" value="{{ setup.alerts.webhook_url }}" placeholder="https://hooks.example.com/...">
+          <div class="hint">A JSON message is posted for the same events.</div></div>
+      </div>
+      <p class="small muted">Alerts cover replication failures, an unhealthy driver, and any failover that runs.</p>
+      <div class="btn-row">
+        <button class="btn primary">Save</button>
+        <button class="btn" hx-post="/setup/alerts/test" hx-target="#output">Send a test</button>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock %}
