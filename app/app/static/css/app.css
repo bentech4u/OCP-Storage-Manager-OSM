@@ -254,3 +254,17 @@ dialog::backdrop { background: rgba(3, 6, 12, .6); backdrop-filter: blur(2px); }
   .sidebar { position: static; height: auto; }
   .grid.cols-3, .grid.cols-4, .grid.cols-2, .row, .row.three { grid-template-columns: 1fr; }
 }
+
+/* collapsible sections: open when there is nothing yet, folded once there is */
+details.fold { margin-top: 1rem; border-top: 1px solid var(--surface-line); padding-top: .8rem; }
+details.fold > summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: .5rem;
+  font-weight: 600; font-size: .92rem; padding: .35rem .2rem; border-radius: var(--radius-sm);
+  user-select: none;
+}
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary:hover { color: var(--brand); }
+details.fold > summary .chev { transition: transform .15s ease; color: var(--text-faint); }
+details.fold[open] > summary .chev { transform: rotate(90deg); color: var(--brand); }
+details.fold[open] > summary { margin-bottom: .5rem; }
+details.fold > summary .muted { font-weight: 450; }

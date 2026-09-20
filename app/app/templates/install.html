@@ -104,8 +104,11 @@
       </tbody>
     </table>
 
-    <form hx-post="/install/clusters" hx-target="body" hx-encoding="multipart/form-data" style="margin-top:1rem">
-      <fieldset><legend>Add a cluster</legend>
+    <details class="fold" {% if not clusters %}open{% endif %}>
+      <summary><span class="chev">▸</span> Add a cluster
+        <span class="muted small">{{ "connect the primary and the disaster recovery cluster" if not clusters else "add another" }}</span></summary>
+    <form hx-post="/install/clusters" hx-target="body" hx-encoding="multipart/form-data">
+      <fieldset>
         <div class="row three">
           <div class="field"><label>Cluster id</label>
             <input type="text" name="cluster_id" placeholder="cluster-1" required>
@@ -155,6 +158,7 @@
         <button class="btn primary">Add cluster</button>
       </fieldset>
     </form>
+    </details>
   </div>
 </section>
 
@@ -184,8 +188,11 @@
       </tbody>
     </table>
 
-    <form hx-post="/install/arrays" hx-target="body" style="margin-top:1rem">
-      <fieldset><legend>Add an array</legend>
+    <details class="fold" {% if not arrays %}open{% endif %}>
+      <summary><span class="chev">▸</span> Add an array
+        <span class="muted small">{{ "register the PowerScale systems both sites use" if not arrays else "add another" }}</span></summary>
+    <form hx-post="/install/arrays" hx-target="body">
+      <fieldset>
         <div class="row three">
           <div class="field"><label>Endpoint</label><input type="text" name="endpoint" placeholder="192.168.68.140" required></div>
           <div class="field"><label>Port</label><input type="number" name="port" value="8080"></div>
@@ -205,6 +212,7 @@
         <button class="btn primary">Add array</button>
       </fieldset>
     </form>
+    </details>
   </div>
 </section>
 
