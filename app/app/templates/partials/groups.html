@@ -1,36 +1,68 @@
-<table>
-  <thead><tr><th>Group</th><th>Cluster</th><th>Role</th><th>Link</th><th>Last action</th><th class="right">Actions</th></tr></thead>
-  <tbody>
-  {% for g in groups %}
-    <tr>
-      <td><strong>{{ g.name }}</strong>
-        <div class="small muted truncate" title="{{ g.protection_group }}">{{ g.protection_group }}</div></td>
-      <td class="small">{{ g.cluster }}<div class="muted">peer {{ g.remote_cluster }}</div></td>
-      <td>{% if g.is_source %}<span class="pill info">source</span>
-          {% elif g.is_source is none %}<span class="pill mute">unknown</span>
-          {% else %}<span class="pill mute">target</span>{% endif %}</td>
-      <td>
-        {% if g.link_state in ("SYNCHRONIZED", "Synchronized") %}<span class="pill ok"><span class="dot"></span>{{ g.link_state }}</span>
-        {% elif g.link_state %}<span class="pill warn"><span class="dot"></span>{{ g.link_state }}</span>
-        {% else %}<span class="pill mute">{{ g.state or "unknown" }}</span>{% endif %}
-      </td>
-      <td class="small muted">{{ g.last_action or "-" }}</td>
-      <td class="right nowrap">
-        <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=sync"
-          hx-target="#output">Sync</button>
-        <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=suspend"
-          hx-target="#output">Suspend</button>
-        <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=reprotect"
-          hx-target="#output">Reprotect</button>
-        <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=failover"
-          hx-target="#output">Failover</button>
-        <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ g.cluster }}&action=failback"
-          hx-target="#output">Failback</button>
-      </td>
-    </tr>
-  {% else %}
-    <tr><td colspan="6" class="empty">No replication groups yet. They appear once a claim is created
-      with a replicated storage class.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+{% for g in groups %}
+<div class="rg-card">
+  <div class="rg-head">
+    <div>
+      <strong class="mono">{{ g.name }}</strong>
+      <div class="small muted">{{ g.claims|join(', ') if g.claims else 'no claims yet' }}</div>
+    </div>
+    <div class="rg-head-right">
+      {% if g.in_progress %}<span class="pill warn"><span class="spin"></span> action running</span>
+      {% elif g.healthy %}<span class="pill ok"><span class="dot"></span>{{ g.link }}</span>
+      {% elif g.failed_over %}<span class="pill warn"><span class="dot"></span>failed over</span>
+      {% else %}<span class="pill mute"><span class="dot"></span>{{ g.link or "unknown" }}</span>{% endif %}
+      <span class="pill info">{{ g.volumes }} volume{{ "" if g.volumes == 1 else "s" }}</span>
+    </div>
+  </div>
+
+  <div class="rg-flow">
+    {% set src = g.source or g.sides[0] %}
+    {% set tgt = g.target or (g.sides[1] if g.sides|length > 1 else none) %}
+    <div class="rg-side active">
+      <div class="rg-side-head"><span class="pill ok">serving</span><strong>{{ src.cluster }}</strong></div>
+      <div class="small muted">{{ src.array }}{% if src.array_endpoint %} &middot; {{ src.array_endpoint }}{% endif %}</div>
+      <div class="small">{{ src.bound }} of {{ src.volumes }} volume(s) in use</div>
+      <div class="small muted truncate" title="{{ src.path }}">{{ src.path }}</div>
+    </div>
+
+    <div class="rg-arrow {{ 'stalled' if not g.healthy else '' }}">
+      <div class="rg-line"><span class="rg-dot"></span><span class="rg-dot d2"></span><span class="rg-dot d3"></span></div>
+      <div class="rg-arrow-label small muted">
+        {% if g.healthy %}replicating{% elif g.failed_over %}link broken{% else %}{{ g.link or "unknown" }}{% endif %}
+      </div>
+    </div>
+
+    {% if tgt %}
+    <div class="rg-side">
+      <div class="rg-side-head"><span class="pill mute">standby</span><strong>{{ tgt.cluster }}</strong></div>
+      <div class="small muted">{{ tgt.array }}{% if tgt.array_endpoint %} &middot; {{ tgt.array_endpoint }}{% endif %}</div>
+      <div class="small">{{ tgt.volumes }} volume(s) held ready{% if tgt.available %}, {{ tgt.available }} unclaimed{% endif %}</div>
+      <div class="small muted truncate" title="{{ tgt.path }}">{{ tgt.path }}</div>
+    </div>
+    {% else %}
+    <div class="rg-side"><div class="small muted">the other side has not reported yet</div></div>
+    {% endif %}
+  </div>
+
+  {% if g.last_action %}<div class="small muted" style="margin:.1rem .2rem .6rem">last action: {{ g.last_action }}</div>{% endif %}
+
+  <div class="btn-row">
+    {% set cluster = (g.source or g.sides[0]).cluster %}
+    <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=sync"
+      hx-target="#output">Sync now</button>
+    <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=suspend"
+      hx-target="#output">Suspend</button>
+    <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=resume"
+      hx-target="#output">Resume</button>
+    <button class="btn sm" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=reprotect"
+      hx-target="#output">Reprotect</button>
+    <div class="spacer"></div>
+    <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=failover"
+      hx-target="#output">Failover</button>
+    <button class="btn sm danger" hx-get="/partials/action-form?rg={{ g.name }}&cluster={{ cluster }}&action=failback"
+      hx-target="#output">Failback</button>
+  </div>
+</div>
+{% else %}
+<div class="empty">No replication groups yet. They appear once a claim is created with a replicated
+  storage class.</div>
+{% endfor %}

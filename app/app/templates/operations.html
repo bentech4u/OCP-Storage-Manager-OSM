@@ -19,7 +19,8 @@
   <div class="card pad-0" id="groups-card">
     <div class="card-head" style="padding:1rem 1.1rem 0">
       <div><h2>Replication groups</h2>
-        <div class="sub">One group per namespace and storage class pair. Actions run through repctl.</div></div>
+        <div class="sub">One group per namespace and storage class pair. The green side is serving
+          the volumes; the other holds a copy. Actions run through repctl.</div></div>
     </div>
     <div id="groups">{% include "partials/groups.html" %}</div>
   </div>

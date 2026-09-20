@@ -276,3 +276,45 @@ details.fold > summary .muted { font-weight: 450; }
 /* the step chips link to their section */
 a.step { text-decoration: none; }
 a.step:hover { border-color: var(--brand); text-decoration: none; }
+
+/* replication group cards */
+.rg-card { border-top: 1px solid var(--surface-line); padding: 1rem 1.1rem; }
+.rg-card:first-child { border-top: 0; }
+.rg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.rg-head-right { display: flex; align-items: center; gap: .4rem; flex: none; }
+.rg-flow {
+  display: grid; grid-template-columns: 1fr 150px 1fr; gap: .8rem; align-items: center;
+  margin: .8rem 0 .4rem;
+}
+.rg-side {
+  border: 1px solid var(--surface-line); border-radius: var(--radius-sm);
+  padding: .65rem .75rem; background: var(--bg-elev-2); min-width: 0;
+}
+.rg-side.active {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, var(--bg-elev-2));
+}
+.rg-side-head { display: flex; align-items: center; gap: .4rem; margin-bottom: .2rem; }
+.rg-arrow { text-align: center; }
+.rg-line {
+  position: relative; height: 3px; border-radius: 3px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ok) 35%, transparent), color-mix(in srgb, var(--brand) 35%, transparent));
+}
+.rg-line::after {
+  content: "▶"; position: absolute; right: -4px; top: -9px; font-size: .7rem; color: var(--brand);
+}
+.rg-dot {
+  position: absolute; top: -2px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--brand); box-shadow: 0 0 8px var(--brand);
+  animation: rg-travel 2.4s linear infinite;
+}
+.rg-dot.d2 { animation-delay: .8s; }
+.rg-dot.d3 { animation-delay: 1.6s; }
+@keyframes rg-travel { from { left: 0; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; }
+  to { left: calc(100% - 7px); opacity: 0; } }
+.rg-arrow.stalled .rg-line { background: color-mix(in srgb, var(--warn) 45%, transparent); }
+.rg-arrow.stalled .rg-line::after { color: var(--warn); }
+.rg-arrow.stalled .rg-dot { animation: none; opacity: .25; }
+.rg-arrow-label { margin-top: .45rem; }
+@media (prefers-reduced-motion: reduce) { .rg-dot { animation: none; opacity: .6; } }
+@media (max-width: 900px) { .rg-flow { grid-template-columns: 1fr; } .rg-line { display: none; } }

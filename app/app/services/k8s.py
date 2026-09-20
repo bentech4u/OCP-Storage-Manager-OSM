@@ -428,6 +428,35 @@ def driver_status(kubeconfig: str | Path, namespace: str) -> dict:
     return out
 
 
+def replicated_volumes(kubeconfig: str | Path) -> dict:
+    """Volumes per replication group, so a group can say how much it carries."""
+    label = "replication.storage.dell.com/replicationGroupName"
+    out: dict = {}
+    try:
+        items = run_json(kubeconfig, ["get", "pv", "-l", label], timeout=60).get("items", [])
+    except ClusterError:
+        return out
+    for pv in items:
+        group = (pv["metadata"].get("labels") or {}).get(label)
+        if not group:
+            continue
+        entry = out.setdefault(group, {"total": 0, "bound": 0, "available": 0, "claims": [],
+                                       "capacity": []})
+        entry["total"] += 1
+        phase = pv.get("status", {}).get("phase", "")
+        if phase == "Bound":
+            entry["bound"] += 1
+        elif phase == "Available":
+            entry["available"] += 1
+        claim = pv.get("spec", {}).get("claimRef") or {}
+        if claim.get("name"):
+            entry["claims"].append(f"{claim.get('namespace', '')}/{claim['name']}")
+        size = (pv.get("spec", {}).get("capacity") or {}).get("storage")
+        if size:
+            entry["capacity"].append(size)
+    return out
+
+
 def summarize_rg(rg: dict) -> dict:
     spec = rg.get("spec", {})
     status = rg.get("status", {})

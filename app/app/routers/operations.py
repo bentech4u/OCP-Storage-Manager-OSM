@@ -5,7 +5,9 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 
 from .. import store
-from ..services import inventory, replication
+from concurrent.futures import ThreadPoolExecutor
+
+from ..services import inventory, k8s, replication
 from ..services.arrays import ArrayError, OneFS
 from ..services.jobs import Job, get as get_job, recent, start
 from ..templating import templates
@@ -14,13 +16,53 @@ router = APIRouter()
 
 
 def _groups() -> list[dict]:
+    """One entry per replication group, with both sides merged into a single view."""
     state = store.load()
-    rows = []
-    for cid, cluster in state["clusters"].items():
-        for rg in replication.replication_groups(cluster["kubeconfig"]):
-            rg["cluster"] = cid
-            rows.append(rg)
-    return rows
+    arrays = {a["name"]: a for a in state["arrays"].values()}
+    merged: dict[str, dict] = {}
+
+    def collect(item):
+        cid, cluster = item
+        rgs = replication.replication_groups(cluster["kubeconfig"])
+        volumes = k8s.replicated_volumes(cluster["kubeconfig"])
+        return cid, cluster, rgs, volumes
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(collect, state["clusters"].items()))
+
+    for cid, cluster, rgs, volumes in results:
+        for rg in rgs:
+            entry = merged.setdefault(rg["name"], {"name": rg["name"], "sides": []})
+            array = (rg.get("protection_group") or "").split("::")[0]
+            vols = volumes.get(rg["name"], {})
+            entry["sides"].append({
+                "cluster": cid, "role": cluster.get("role", ""), "array": array,
+                "array_endpoint": (arrays.get(array) or {}).get("endpoint", ""),
+                "is_source": rg.get("is_source"), "link": rg.get("link_state", ""),
+                "state": rg.get("state", ""), "path": rg.get("protection_group", ""),
+                "last_action": rg.get("last_action") or rg.get("condition", ""),
+                "volumes": vols.get("total", 0), "bound": vols.get("bound", 0),
+                "available": vols.get("available", 0), "claims": vols.get("claims", []),
+                "capacity": vols.get("capacity", []),
+            })
+
+    groups = []
+    for entry in merged.values():
+        sides = entry["sides"]
+        source = next((s for s in sides if s["is_source"]), None)
+        target = next((s for s in sides if s is not source), None)
+        link = (source or sides[0])["link"]
+        groups.append({
+            "name": entry["name"], "sides": sides, "source": source, "target": target,
+            "link": link,
+            "healthy": link in ("SYNCHRONIZED", "Synchronized"),
+            "failed_over": link == "FAILEDOVER",
+            "in_progress": any("IN_PROGRESS" in (s["state"] or "") for s in sides),
+            "volumes": max((s["volumes"] for s in sides), default=0),
+            "claims": sorted({c for s in sides for c in s["claims"]}),
+            "last_action": next((s["last_action"] for s in sides if s["last_action"]), ""),
+        })
+    return groups
 
 
 @router.get("/operations", response_class=HTMLResponse)
