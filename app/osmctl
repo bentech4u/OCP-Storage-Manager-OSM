@@ -375,14 +375,12 @@ def cmd_rg_action(args) -> None:
         answer = input("run this? type yes: ").strip().lower()
         if answer != "yes":
             raise SystemExit("cancelled")
-    kubeconfig = None
-    for cluster in store.load()["clusters"].values():
-        if replication.rg_state(cluster["kubeconfig"], args.rg).get("state"):
-            kubeconfig = cluster["kubeconfig"]
-            break
+    kubeconfigs = {c["id"]: c["kubeconfig"] for c in store.load()["clusters"].values()
+                   if replication.rg_state(c["kubeconfig"], args.rg).get("state")}
     job = run_sync(f"{args.action} {args.rg}", "replication-action",
                    lambda j: replication.act(j, args.rg, args.action, args.target,
-                                             args.unplanned, args.discard, kubeconfig=kubeconfig))
+                                             args.unplanned, args.discard,
+                                             kubeconfigs=kubeconfigs))
     raise SystemExit(0 if job.status == "ok" else 1)
 
 

@@ -421,45 +421,59 @@ EXPECTED_ANNOTATION = {
 
 def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
         unplanned: bool = False, discard: bool = False,
-        kubeconfig: str | None = None, wait: int = 300) -> int:
-    """Run one repctl action and, when possible, wait for the cluster to finish it.
+        kubeconfig: str | None = None, wait: int = 300,
+        kubeconfigs: dict[str, str] | None = None) -> int:
+    """Run one repctl action and wait for the clusters to carry it out.
 
-    repctl returns as soon as it has written the request onto the group, so a job that
-    ended there looked successful even when the action was never carried out. Worse,
-    a request written while another action is running is simply lost, so this refuses
-    to start one on a busy group.
+    Which side records the action depends on the action: a failover is written at the
+    source, a reprotect at the site being promoted. Both clusters are therefore polled,
+    and the action counts as done when one of them reports the matching action finished
+    and neither is still working.
     """
-    if kubeconfig:
-        running = busy(kubeconfig, rg)
+    watching = dict(kubeconfigs or {})
+    if kubeconfig and not watching:
+        watching = {"cluster": kubeconfig}
+
+    for cid, kc in watching.items():
+        running = busy(kc, rg)
         if running:
             raise ClusterError(
-                f"{rg} is still running {running}. Actions are written onto the group one at a "
-                "time, and a second one issued now would be dropped. Wait for it to finish.")
+                f"{rg} is still running {running} on {cid}. Actions are written onto the group "
+                "one at a time, and a second one issued now would be dropped. Let it finish.")
 
     args = build_args(rg, action, target_cluster, unplanned, discard)
     job.log("repctl " + " ".join(args))
     rc = run_repctl(job, args)
-    if rc != 0 or not kubeconfig:
+    if rc != 0 or not watching:
         return rc
 
+    expected = EXPECTED_ANNOTATION.get(action, ())
     job.log("waiting for the cluster to carry it out")
     last = ""
     for _ in range(max(1, wait // 5)):
         time.sleep(5)
-        now = rg_state(kubeconfig, rg)
-        line = (f"  state={now.get('state','?')} link={now.get('link','?')} "
-                f"source={now.get('is_source')} action={now.get('action','-')}"
-                f"{'' if now.get('completed') else ' (running)'}")
-        if line != last:
-            job.log(line)
-            last = line
-        expected = EXPECTED_ANNOTATION.get(action, ())
-        arrived = now.get("action") in expected if expected else True
-        if arrived and now.get("error"):
-            job.log(f"  the cluster reported: {now['error']}")
+        seen, working, failure = False, False, ""
+        lines = []
+        for cid, kc in sorted(watching.items()):
+            now = rg_state(kc, rg)
+            lines.append(f"  {cid}: state={now.get('state','?')} link={now.get('link','?')} "
+                         f"source={now.get('is_source')} action={now.get('action','-')}"
+                         f"{'' if now.get('completed') else ' (running)'}")
+            arrived = now.get("action") in expected if expected else True
+            if "IN_PROGRESS" in (now.get("state") or "") or now.get("pending"):
+                working = True
+            if arrived and now.get("completed"):
+                seen = True
+                if now.get("error"):
+                    failure = now["error"]
+        block = "\n".join(lines)
+        if block != last:
+            job.log(block)
+            last = block
+        if failure:
+            job.log(f"  the cluster reported: {failure}")
             return 1
-        if (arrived and not now.get("pending") and now.get("completed")
-                and "IN_PROGRESS" not in (now.get("state") or "")):
+        if seen and not working:
             job.log("action finished")
             return 0
     job.log("still running after the wait; check the group on the Operations page")
