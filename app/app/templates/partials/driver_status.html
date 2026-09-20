@@ -1,8 +1,11 @@
+{% for row in rows %}
+{% set cluster = row.cluster %}{% set status = row.status %}{% set install = row.install %}
 <div class="banner {{ 'ok' if status.controller_ready and status.node_ready else ('warn' if status.pods else '') }}"
-     style="margin:.2rem 0 1rem">
+     style="margin:.2rem 0 .6rem{{ '; box-shadow: 0 0 0 1px var(--brand) inset' if row.selected }}">
   <span>{{ "✓" if status.controller_ready and status.node_ready else ("…" if status.pods else "•") }}</span>
   <div style="flex:1">
     <strong>{{ cluster.id }}</strong>
+    <span class="muted small">{{ cluster.role }}</span>
     {% if status.error %}
       <span class="pill bad"><span class="dot"></span>unreachable</span>
       <div class="small muted">{{ status.error }}</div>
@@ -17,7 +20,7 @@
       {% endif %}
       {% if install %}<span class="pill info">{{ install.method }}, {{ install.mode }}</span>{% endif %}
       <div class="small muted">
-        {{ status.pods|length }} pod(s) in {{ status.namespace }}:
+        {{ status.pods|length }} driver pod(s) in {{ status.namespace }}:
         {{ status.pods|selectattr('all_ready')|list|length }} ready,
         {{ status.pods|rejectattr('all_ready')|list|length }} not ready
         {% if status.csidriver %} &middot; CSI driver registered{% endif %}
@@ -30,27 +33,28 @@
           {{ sc.rpo }} to {{ sc.remote_cluster }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
       </div>
       {% endif %}
+      <details class="fold" style="border:0;padding-top:.2rem;margin-top:.2rem">
+        <summary><span class="chev">▸</span> <span class="small">pods</span></summary>
+        <table>
+          <thead><tr><th>Pod</th><th>Ready</th><th>Status</th><th class="num">Restarts</th><th>Node</th></tr></thead>
+          <tbody>
+            {% for p in status.pods %}
+            <tr>
+              <td class="small">{{ p.name }}</td>
+              <td><span class="pill {{ 'ok' if p.all_ready else 'warn' }}">{{ p.ready }}</span></td>
+              <td class="small">{{ p.phase }}</td>
+              <td class="small num">{{ p.restarts }}</td>
+              <td class="small muted">{{ p.node }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
     {% endif %}
   </div>
+  {% if loop.first %}
   <button class="btn sm ghost" hx-get="/install/driver/status" hx-include="[name='cluster_id']"
           hx-target="#driver-status" title="check again">↻</button>
+  {% endif %}
 </div>
-{% if status.pods %}
-<details class="fold" style="margin:-.4rem 0 1rem;border:0;padding-top:0">
-  <summary><span class="chev">▸</span> Pods <span class="muted small">on {{ cluster.id }}</span></summary>
-  <table>
-    <thead><tr><th>Pod</th><th>Ready</th><th>Status</th><th>Restarts</th><th>Node</th></tr></thead>
-    <tbody>
-      {% for p in status.pods %}
-      <tr>
-        <td class="small">{{ p.name }}</td>
-        <td><span class="pill {{ 'ok' if p.all_ready else 'warn' }}">{{ p.ready }}</span></td>
-        <td class="small">{{ p.phase }}</td>
-        <td class="small num">{{ p.restarts }}</td>
-        <td class="small muted">{{ p.node }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</details>
-{% endif %}
+{% endfor %}

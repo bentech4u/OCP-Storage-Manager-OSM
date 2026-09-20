@@ -19,6 +19,11 @@ router = APIRouter()
 def _page(request: Request, **extra):
     state = store.load()
     data = inventory.snapshot()
+    # the driver status strips are rendered with the page, then refreshed in place
+    rows = [{"cluster": c, "status": c.get("driver") or {"pods": [], "namespace":
+             c.get("namespace", DRIVER_NAMESPACE_DEFAULT), "error": c.get("error", "")},
+             "install": state["installs"].get(c["id"]), "selected": False}
+            for c in data["clusters"]]
     ctx = {
         "page": "install", "state": state, "data": data,
         "clusters": list(state["clusters"].values()),
@@ -26,6 +31,7 @@ def _page(request: Request, **extra):
         "tools": data["tools"],
         "repctl_default": tools.default_repctl_choice(),
         "namespace_default": DRIVER_NAMESPACE_DEFAULT,
+        "driver_rows": rows,
     }
     ctx.update(extra)
     return templates.TemplateResponse(request, "install.html", ctx)
@@ -266,19 +272,27 @@ async def delete_array(request: Request, aid: str):
 
 @router.get("/install/driver/status", response_class=HTMLResponse)
 async def driver_status_partial(request: Request, cluster_id: str = ""):
-    """What is actually running on the selected cluster, shown next to the install form."""
+    """What is running on every registered cluster, shown above the install form."""
+    from concurrent.futures import ThreadPoolExecutor
+
     state = store.load()
-    cluster = state["clusters"].get(cluster_id) or next(iter(state["clusters"].values()), None)
-    if not cluster:
+    clusters = list(state["clusters"].values())
+    if not clusters:
         return HTMLResponse('<div class="banner"><span>•</span><div>Add a cluster first.</div></div>')
-    ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
-    try:
-        status = k8s.driver_status(cluster["kubeconfig"], ns)
-    except k8s.ClusterError as exc:
-        status = {"error": str(exc)[:200], "pods": [], "namespace": ns}
-    return templates.TemplateResponse(request, "partials/driver_status.html", {
-        "cluster": cluster, "status": status, "install": state["installs"].get(cluster["id"]),
-    })
+
+    def look(cluster: dict) -> dict:
+        ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+        try:
+            status = k8s.driver_status(cluster["kubeconfig"], ns)
+        except k8s.ClusterError as exc:
+            status = {"error": str(exc)[:200], "pods": [], "namespace": ns}
+        return {"cluster": cluster, "status": status,
+                "install": state["installs"].get(cluster["id"]),
+                "selected": cluster["id"] == cluster_id}
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        rows = list(pool.map(look, clusters))
+    return templates.TemplateResponse(request, "partials/driver_status.html", {"rows": rows})
 
 
 # --- driver install ------------------------------------------------------------

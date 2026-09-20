@@ -233,6 +233,10 @@
   <div class="card">
     <div class="card-head"><div><h2>4. Install the driver</h2>
       <div class="sub">Choose the install method and whether this site takes part in replication.</div></div></div>
+    <div id="driver-status" hx-get="/install/driver/status" hx-include="[name='cluster_id']"
+         hx-trigger="change from:[name='cluster_id'], every 20s" hx-swap="innerHTML">
+      {% with rows = driver_rows %}{% include "partials/driver_status.html" %}{% endwith %}
+    </div>
     <form hx-post="/install/driver" hx-target="#output">
       <div class="choices" style="margin-bottom:1rem">
         <label class="choice"><input type="radio" name="method" value="operator" checked>
@@ -251,8 +255,6 @@
           <div class="title">With replication</div>
           <div class="desc">Adds the replicator sidecar and the replication custom resource definitions.</div></label>
       </div>
-      <div id="driver-status" hx-get="/install/driver/status" hx-include="[name='cluster_id']"
-           hx-trigger="load, change from:[name='cluster_id'], every 20s"></div>
       <div class="row three">
         <div class="field"><label>Cluster</label>
           <select name="cluster_id" required>
