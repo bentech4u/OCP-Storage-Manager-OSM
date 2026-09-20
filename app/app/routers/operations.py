@@ -16,6 +16,37 @@ from ..templating import templates
 router = APIRouter()
 
 
+RPO_SUFFIXES = ("Five_Minutes", "Fifteen_Minutes", "Thirty_Minutes", "One_Hour",
+                "Six_Hours", "Twelve_Hours", "One_Day")
+
+
+def _split_path(protection_group: str, namespaces: list[str]) -> dict:
+    """Break a protection group id into its parts so the page can show them.
+
+    The id looks like ISIN-DR::/ifs/data/csi/csi-prod-t25-192.168.68.40-Five_Minutes/,
+    where the last folder is the volume group: prefix, namespace, the far array's
+    address and the recovery point objective.
+    """
+    array, _, path = protection_group.partition("::")
+    path = path or protection_group
+    folder = path.rstrip("/").rsplit("/", 1)[-1]
+    base = path.rstrip("/")[: -len(folder)] if folder and path.rstrip("/").endswith(folder) else path
+    namespace, prefix, address, rpo = "", "", "", ""
+    for candidate in RPO_SUFFIXES:
+        if folder.endswith("-" + candidate):
+            rpo = candidate
+            break
+    stem = folder[: -(len(rpo) + 1)] if rpo else folder
+    known = [n for n in namespaces if n and f"-{n}-" in f"-{stem}-"]
+    if known:
+        namespace = max(known, key=len)
+        head, _, tail = stem.partition(f"-{namespace}-")
+        prefix, address = head, tail
+    return {"array": array, "base": base, "folder": folder, "prefix": prefix,
+            "namespace": namespace, "address": address, "rpo": rpo,
+            "full": protection_group}
+
+
 def _groups() -> list[dict]:
     """One entry per replication group, with both sides merged into a single view."""
     state = store.load()
@@ -50,6 +81,9 @@ def _groups() -> list[dict]:
     groups = []
     for entry in merged.values():
         sides = entry["sides"]
+        namespaces = sorted({c.split("/")[0] for s in sides for c in s["claims"] if "/" in c})
+        for side in sides:
+            side["parts"] = _split_path(side["path"], namespaces)
         source = next((s for s in sides if s["is_source"]), None)
         target = next((s for s in sides if s is not source), None)
         link = (source or sides[0])["link"]
@@ -62,6 +96,8 @@ def _groups() -> list[dict]:
             "volumes": max((s["volumes"] for s in sides), default=0),
             "claims": sorted({c for s in sides for c in s["claims"]}),
             "last_action": next((s["last_action"] for s in sides if s["last_action"]), ""),
+            "namespace": next((s["parts"]["namespace"] for s in sides
+                               if s["parts"].get("namespace")), ""),
         })
     return groups
 

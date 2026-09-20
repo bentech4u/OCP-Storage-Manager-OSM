@@ -4,7 +4,9 @@
   <div class="rg-head">
     <div>
       <strong class="mono">{{ g.name }}</strong>
-      <div class="small muted">{{ g.claims|join(', ') if g.claims else 'no claims yet' }}</div>
+      <div class="small muted">
+        {% if g.namespace %}<span class="ns">{{ g.namespace }}</span> &middot; {% endif %}
+        {{ g.claims|join(', ') if g.claims else 'no claims yet' }}</div>
     </div>
     <div class="rg-head-right">
       {% if g.in_progress %}<span class="pill warn"><span class="spin"></span> action running</span>
@@ -22,7 +24,13 @@
       <div class="rg-side-head"><span class="pill ok">serving</span><strong>{{ src.cluster }}</strong></div>
       <div class="small muted">{{ src.array }}{% if src.array_endpoint %} &middot; {{ src.array_endpoint }}{% endif %}</div>
       <div class="small">{{ src.bound }} of {{ src.volumes }} volume(s) in use</div>
-      <div class="small muted truncate" title="{{ src.path }}">{{ src.path }}</div>
+      {% with pp = src.parts %}
+      <div class="small path" title="{{ src.path }}">
+        <span class="muted">{{ pp.array }}::{{ pp.base }}</span>{% if pp.namespace %}<span
+          >{{ pp.prefix }}-</span><span class="ns" title="namespace">{{ pp.namespace }}</span><span
+          >-{{ pp.address }}-{{ pp.rpo }}</span>{% else %}<span>{{ pp.folder }}</span>{% endif %}
+      </div>
+      {% endwith %}
     </div>
 
     <div class="rg-arrow {{ 'stalled' if not g.healthy else '' }}">
@@ -37,7 +45,13 @@
       <div class="rg-side-head"><span class="pill mute">standby</span><strong>{{ tgt.cluster }}</strong></div>
       <div class="small muted">{{ tgt.array }}{% if tgt.array_endpoint %} &middot; {{ tgt.array_endpoint }}{% endif %}</div>
       <div class="small">{{ tgt.volumes }} volume(s) held ready{% if tgt.available %}, {{ tgt.available }} unclaimed{% endif %}</div>
-      <div class="small muted truncate" title="{{ tgt.path }}">{{ tgt.path }}</div>
+      {% with pp = tgt.parts %}
+      <div class="small path" title="{{ tgt.path }}">
+        <span class="muted">{{ pp.array }}::{{ pp.base }}</span>{% if pp.namespace %}<span
+          >{{ pp.prefix }}-</span><span class="ns" title="namespace">{{ pp.namespace }}</span><span
+          >-{{ pp.address }}-{{ pp.rpo }}</span>{% else %}<span>{{ pp.folder }}</span>{% endif %}
+      </div>
+      {% endwith %}
     </div>
     {% else %}
     <div class="rg-side"><div class="small muted">the other side has not reported yet</div></div>
