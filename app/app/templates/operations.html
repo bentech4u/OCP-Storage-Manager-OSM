@@ -22,7 +22,8 @@
         <div class="sub">One group per namespace and storage class pair. The green side is serving
           the volumes; the other holds a copy. Actions run through repctl.</div></div>
     </div>
-    <div id="groups">{% include "partials/groups.html" %}</div>
+    <div id="groups" hx-get="/partials/groups" hx-trigger="every 15s, refresh"
+         hx-swap="innerHTML" data-refresh-on-job="1">{% include "partials/groups.html" %}</div>
   </div>
 </section>
 
@@ -33,7 +34,8 @@
         <div class="sub">What the storage side reports, independent of Kubernetes.</div></div>
       <button class="btn sm" hx-get="/partials/synciq" hx-target="#synciq">Refresh</button>
     </div>
-    <div id="synciq" hx-get="/partials/synciq" hx-trigger="load"><div class="empty">Loading…</div></div>
+    <div id="synciq" hx-get="/partials/synciq" hx-trigger="load, every 60s, refresh"
+         data-refresh-on-job="1"><div class="empty">Loading…</div></div>
   </div>
 </section>
 

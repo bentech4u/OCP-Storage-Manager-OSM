@@ -43,6 +43,13 @@
     {% endif %}
   </div>
 
+  {% if g.failed_over %}
+  <div class="banner warn" style="margin:.2rem 0 .6rem">
+    <span>⚠</span>
+    <div>Failed over, so the pair is unprotected. Run <strong>Reprotect</strong> at the site that
+      should serve from now on; that re-establishes replication in the new direction.</div>
+  </div>
+  {% endif %}
   {% if g.last_action %}<div class="small muted" style="margin:.1rem .2rem .6rem">last action: {{ g.last_action }}</div>{% endif %}
 
   <div class="btn-row">
