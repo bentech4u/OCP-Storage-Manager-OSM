@@ -242,8 +242,14 @@ async def add_array(request: Request, endpoint: str = Form(...), username: str =
     store.update(lambda s: s["arrays"].update({aid: record}))
     inventory.invalidate()
     missing = ", ".join(info.get("missing_privileges", []))
+    supported = info.get("auth_supported", {})
+    accepted = ", ".join(k for k, v in supported.items() if v) or "session"
     notice = (f"Array {record['name']} added, reached with {record['auth_mode']} "
-              f"authentication (isiAuthType {record['auth_type']}).")
+              f"authentication (isiAuthType {record['auth_type']}). "
+              f"This array accepts: {accepted}.")
+    if not supported.get("basic"):
+        notice += (" Basic is off on the array; turn it on with "
+                   "isi_gconfig -t web-config auth_basic=true if you prefer it.")
     if missing:
         notice += f" Missing privileges: {missing}."
     if not path_ok:

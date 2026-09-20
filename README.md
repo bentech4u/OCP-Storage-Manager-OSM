@@ -117,6 +117,9 @@ they shape how the console behaves:
 * `replicationCertificateID` is the SyncIQ target certificate, taken from the remote array's entry.
   On OneFS the identifier is the certificate's SHA-256 fingerprint.
 * PowerScale does not implement `swap` or `establish`, so those actions are not offered.
+* OneFS 9.15 ships with basic Platform API authentication disabled, which looks like a bare 401.
+  It can be re-enabled with `isi_gconfig -t web-config auth_basic=true` followed by an apache2
+  restart, and the console reports which authentication types each array accepts.
 * A replicated storage class needs six parameters, not the three Dell's page calls mandatory, and
   the recovery point objective must be one of seven exact strings.
 

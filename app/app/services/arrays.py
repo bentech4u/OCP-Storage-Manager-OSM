@@ -5,9 +5,14 @@ The array can be reached two ways, matching the driver's isiAuthType:
   1, session  POST /session/1/session, then the isisessid cookie plus the isicsrf token
   0, basic    an ordinary Authorization header
 
-OneFS 9.15 refuses basic auth on the Platform API entirely, so session is the default
-and the only thing that works there. Older releases accept both.
+OneFS 9.15 ships with basic auth switched off for the Platform API. It can be turned
+back on from the array's shell, which is worth doing when session logins are slow or
+flaky:
+
+    isi_gconfig -t web-config auth_basic=true
+    isi services -a apache2 disable && isi services -a apache2 enable
 """
+
 from __future__ import annotations
 
 import json
@@ -18,6 +23,11 @@ import urllib.request
 from typing import Any
 
 import yaml
+
+ENABLE_BASIC_HINT = (
+    "enable it on the array with: isi_gconfig -t web-config auth_basic=true "
+    "then isi services -a apache2 disable && isi services -a apache2 enable"
+)
 
 REQUIRED_PRIVS = {
     "ISI_PRIV_LOGIN_PAPI": "r", "ISI_PRIV_NFS": "rw", "ISI_PRIV_QUOTA": "rw",
@@ -119,9 +129,8 @@ class OneFS:
         else:                                   # basic: prove it on an endpoint that needs rights
             st, data = self.get("/platform/3/cluster/config")
             if st == 401:
-                raise ArrayError("this array refuses basic authentication; OneFS 9.15 and later "
-                                 "only accept session authentication, so choose session "
-                                 "(isiAuthType 1)")
+                raise ArrayError("this array refuses basic authentication. Either choose session "
+                                 "(isiAuthType 1), or " + ENABLE_BASIC_HINT)
             if st == 403:
                 raise ArrayError("basic authentication worked but the user lacks "
                                  "ISI_PRIV_LOGIN_PAPI")
@@ -158,6 +167,7 @@ class OneFS:
             if p not in privs or (need == "rw" and not privs[p])
         ]
         out["can_replicate"] = privs.get(REPLICATION_PRIV, False)
+        out["auth_supported"] = self.auth_capabilities()
         st, sync = self.get("/platform/16/sync/settings")
         if st == 200:
             s = sync.get("settings", sync)
@@ -165,6 +175,32 @@ class OneFS:
             out["synciq_encryption_required"] = s.get("encryption_required")
             out["synciq_cluster_certificate_id"] = s.get("cluster_certificate_id", "")
         return out
+
+    def auth_capabilities(self) -> dict:
+        """Which of the two authentication types this array actually accepts."""
+        import base64
+        result = {"basic": False, "session": False}
+        probe = "/platform/3/cluster/config"
+        req = urllib.request.Request(self.base + probe)
+        token = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
+        req.add_header("Authorization", f"Basic {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as resp:
+                result["basic"] = resp.status == 200
+        except Exception:                                   # noqa: BLE001
+            result["basic"] = False
+        saved = self.mode
+        try:
+            self.mode = "session"
+            self.cookie = None
+            st, _ = self.get(probe)
+            result["session"] = st == 200
+        except ArrayError:
+            result["session"] = False
+        finally:
+            self.mode = saved
+            self.cookie = None
+        return result
 
     def check_path(self, isi_path: str) -> dict:
         st, data = self.get("/namespace" + urllib.parse.quote(isi_path) + "?detail=mode,type,owner")
