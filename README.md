@@ -75,7 +75,7 @@ osmctl status                       # tools, clusters, arrays, repctl store
 osmctl doctor                       # health check of the whole installation
 osmctl cluster add --id cluster-1 --server api.ocp.example.com --user kubeadmin
 osmctl cluster serviceaccount --id cluster-1
-osmctl array add --endpoint 10.0.0.10 --user csiuser --create-path
+osmctl array add --endpoint 10.0.0.10 --user csiuser --create-path --auth-type 1
 osmctl driver install --cluster cluster-1 --mode replication --method operator
 osmctl sc create --name isilon-replicated --cluster cluster-1 --array main \
     --replicated --target-cluster cluster-2 --target-array dr --rpo Five_Minutes

@@ -219,9 +219,9 @@ async def add_array(request: Request, endpoint: str = Form(...), username: str =
                     password: str = Form(...), port: int = Form(8080),
                     isi_path: str = Form("/ifs/data/csi"), access_zone: str = Form("System"),
                     skip_cert_validation: str = Form("on"), is_default: str = Form(""),
-                    create_path: str = Form("")):
+                    create_path: str = Form(""), auth_type: int = Form(1)):
     client = OneFS(endpoint, port, username, password,
-                   verify=(skip_cert_validation != "on"))
+                   verify=(skip_cert_validation != "on"), auth_type=int(auth_type))
     try:
         info = client.inspect()
     except ArrayError as exc:
@@ -234,6 +234,7 @@ async def add_array(request: Request, endpoint: str = Form(...), username: str =
         "id": aid, "name": info.get("name") or aid, "endpoint": endpoint, "port": port,
         "username": username, "password": password, "isi_path": isi_path,
         "access_zone": access_zone, "skip_cert_validation": skip_cert_validation == "on",
+        "auth_type": int(auth_type), "auth_mode": info.get("auth_mode", "session"),
         "is_default": is_default == "on", "added": store.now(),
         "replication_certificate_id": info.get("synciq_cluster_certificate_id", ""),
         "onefs_version": info.get("onefs_version", ""), "path_ok": path_ok,
@@ -241,7 +242,8 @@ async def add_array(request: Request, endpoint: str = Form(...), username: str =
     store.update(lambda s: s["arrays"].update({aid: record}))
     inventory.invalidate()
     missing = ", ".join(info.get("missing_privileges", []))
-    notice = f"Array {record['name']} added."
+    notice = (f"Array {record['name']} added, reached with {record['auth_mode']} "
+              f"authentication (isiAuthType {record['auth_type']}).")
     if missing:
         notice += f" Missing privileges: {missing}."
     if not path_ok:
@@ -292,6 +294,9 @@ async def install_driver(request: Request):
     # Every cluster's secret lists every array: the driver resolves the remote end of a
     # SyncIQ pair from its own config, so both ends must be present on both sites.
     default_array = form.get("default_array") or (arrays[0]["id"] if arrays else "")
+    home = state["arrays"].get(default_array, {})
+    if not form.get("auth_type") and home.get("auth_type") is not None:
+        opts["auth_type"] = int(home["auth_type"])        # follow the array registration
     peers = [c for c in state["clusters"].values() if c["id"] != cid]
     opts["target_cluster_ids"] = [c["id"] for c in peers]
 

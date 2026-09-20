@@ -40,8 +40,11 @@ written to `data/logs/`.
    roles, secrets and the rest. *Export service account* creates a service account with a
    non-expiring token, binds it to cluster-admin and writes a kubeconfig the console uses from
    then on, so nothing later depends on a session that expires.
-3. **Arrays.** Register each PowerScale array. The console reads its version, zones, licences,
-   privileges and SyncIQ certificate, and can create the base path.
+3. **Arrays.** Register each PowerScale array. Choose how the Platform API is reached, session
+   (`isiAuthType: 1`) or basic (`isiAuthType: 0`); OneFS 9.15 and later accept session only, and
+   the console says so plainly if basic is refused. It then reads the array's version, zones,
+   licences, privileges and SyncIQ certificate, and can create the base path. The driver install
+   follows the array's setting unless you override it.
 4. **Driver.** Choose Operator or Helm, and standalone or replication. The credentials secret
    always lists every registered array, because the driver resolves the far end of a SyncIQ pair
    from its own configuration.

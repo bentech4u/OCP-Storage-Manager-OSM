@@ -168,13 +168,14 @@
     <div class="card-head"><div><h2>3. PowerScale arrays</h2>
       <div class="sub">Every cluster's credentials secret lists every array, which is what replication requires.</div></div></div>
     <table>
-      <thead><tr><th>Array</th><th>Endpoint</th><th>OneFS</th><th>Base path</th><th>SyncIQ certificate</th><th></th></tr></thead>
+      <thead><tr><th>Array</th><th>Endpoint</th><th>OneFS</th><th>Auth</th><th>Base path</th><th>SyncIQ certificate</th><th></th></tr></thead>
       <tbody>
       {% for a in arrays %}
         <tr>
           <td><strong>{{ a.name }}</strong>{% if a.is_default %} <span class="pill info">default</span>{% endif %}</td>
           <td class="small">{{ a.endpoint }}:{{ a.port }}<div class="muted">{{ a.username }}</div></td>
           <td class="small">{{ a.onefs_version }}</td>
+          <td class="small"><span class="pill {{ 'info' if a.auth_type == 1 else 'mute' }}">{{ a.auth_mode or ("session" if a.auth_type != 0 else "basic") }}</span></td>
           <td class="small">{{ a.isi_path }}
             {% if not a.path_ok %}<span class="pill warn">missing</span>{% endif %}</td>
           <td class="small mono truncate" title="{{ a.replication_certificate_id }}">
@@ -183,7 +184,7 @@
             hx-target="body" data-confirm="Remove {{ a.name }}?">Remove</button></td>
         </tr>
       {% else %}
-        <tr><td colspan="6" class="empty">No arrays yet.</td></tr>
+        <tr><td colspan="7" class="empty">No arrays yet.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -202,6 +203,16 @@
           <div class="field"><label>User</label><input type="text" name="username" placeholder="csiuser" required></div>
           <div class="field"><label>Password</label><input type="password" name="password" required></div>
           <div class="field"><label>Base path</label><input type="text" name="isi_path" value="/ifs/data/csi"></div>
+        </div>
+        <div class="row three">
+          <div class="field"><label>API authentication</label>
+            <select name="auth_type">
+              <option value="1" selected>session, isiAuthType 1</option>
+              <option value="0">basic, isiAuthType 0</option>
+            </select>
+            <div class="hint">OneFS 9.15 and later accept session only. Older releases accept both.
+              The driver install follows whatever works here.</div></div>
+          <div class="field"></div><div class="field"></div>
         </div>
         <div class="check"><input type="checkbox" id="skipcert" name="skip_cert_validation" checked>
           <label for="skipcert">Skip certificate validation, the usual choice for a self signed array</label></div>
@@ -257,8 +268,9 @@
       </div>
       <div class="row three">
         <div class="field"><label>Authentication type</label>
-          <select name="auth_type"><option value="1" selected>session, required by OneFS 9.15</option>
-            <option value="0">basic</option></select></div>
+          <select name="auth_type"><option value="1" selected>session, isiAuthType 1</option>
+            <option value="0">basic, isiAuthType 0</option></select>
+          <div class="hint">Matches the array registration unless you change it.</div></div>
         <div class="field"><label>Array API port</label><input type="number" name="endpoint_port" value="8080"></div>
         <div class="field" style="display:flex;align-items:flex-end">
           <div>

@@ -1,7 +1,12 @@
 """OneFS Platform API client and the driver secret it feeds.
 
-OneFS 9.15 refuses basic auth on the Platform API, so this client logs in at
-/session/1/session and reuses the isisessid cookie with the isicsrf token.
+The array can be reached two ways, matching the driver's isiAuthType:
+
+  1, session  POST /session/1/session, then the isisessid cookie plus the isicsrf token
+  0, basic    an ordinary Authorization header
+
+OneFS 9.15 refuses basic auth on the Platform API entirely, so session is the default
+and the only thing that works there. Older releases accept both.
 """
 from __future__ import annotations
 
@@ -26,9 +31,12 @@ class ArrayError(RuntimeError):
     pass
 
 
+AUTH_TYPES = {1: "session", 0: "basic"}
+
+
 class OneFS:
     def __init__(self, endpoint: str, port: int, user: str, password: str,
-                 verify: bool = False, timeout: int = 15):
+                 verify: bool = False, timeout: int = 15, auth_type: int = 1):
         host = endpoint.replace("https://", "").replace("http://", "").strip("/")
         self.base = f"https://{host}:{port}"
         self.user, self.password, self.timeout = user, password, timeout
@@ -38,8 +46,23 @@ class OneFS:
             self.ctx.verify_mode = ssl.CERT_NONE
         self.cookie: str | None = None
         self.csrf: str | None = None
+        self.auth_type = int(auth_type)
+        self.mode = AUTH_TYPES.get(self.auth_type, "session")
 
     # -- transport ------------------------------------------------------------
+    def _auth(self, req: urllib.request.Request) -> None:
+        if self.mode == "basic":
+            import base64
+            token = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
+            req.add_header("Authorization", f"Basic {token}")
+            return
+        if not self.cookie:
+            self.login()
+        if self.cookie:
+            req.add_header("Cookie", self.cookie)
+            req.add_header("X-CSRF-Token", self.csrf or "")
+            req.add_header("Referer", self.base)
+
     def _req(self, method: str, path: str, body: Any = None, auth: str = "session") -> tuple[int, Any]:
         url = self.base + path
         data = json.dumps(body).encode() if body is not None else None
@@ -48,12 +71,7 @@ class OneFS:
         if data is not None:
             req.add_header("Content-Type", "application/json")
         if auth == "session":
-            if not self.cookie:
-                self.login()
-            if self.cookie:
-                req.add_header("Cookie", self.cookie)
-                req.add_header("X-CSRF-Token", self.csrf or "")
-                req.add_header("Referer", self.base)
+            self._auth(req)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as resp:
                 payload = resp.read()
@@ -92,10 +110,21 @@ class OneFS:
     # -- discovery ------------------------------------------------------------
     def inspect(self) -> dict:
         """Everything the UI shows about an array, in one round trip set."""
-        out: dict = {"reachable": False, "errors": []}
+        out: dict = {"reachable": False, "errors": [], "auth_type": self.auth_type,
+                     "auth_mode": self.mode}
         st, ident = self.get("/platform/3/cluster/identity")
         out["name"] = (ident or {}).get("name", "") if st == 200 else ""
-        self.login()
+        if self.mode == "session":
+            self.login()
+        else:                                   # basic: prove it on an endpoint that needs rights
+            st, data = self.get("/platform/3/cluster/config")
+            if st == 401:
+                raise ArrayError("this array refuses basic authentication; OneFS 9.15 and later "
+                                 "only accept session authentication, so choose session "
+                                 "(isiAuthType 1)")
+            if st == 403:
+                raise ArrayError("basic authentication worked but the user lacks "
+                                 "ISI_PRIV_LOGIN_PAPI")
         out["reachable"] = True
         st, cfg = self.get("/platform/3/cluster/config")
         if st == 200:
@@ -144,11 +173,7 @@ class OneFS:
     def create_path(self, isi_path: str, mode: str = "0777") -> bool:
         url = self.base + "/namespace" + urllib.parse.quote(isi_path) + "?recursive=true"
         req = urllib.request.Request(url, method="PUT")
-        if not self.cookie:
-            self.login()
-        req.add_header("Cookie", self.cookie or "")
-        req.add_header("X-CSRF-Token", self.csrf or "")
-        req.add_header("Referer", self.base)
+        self._auth(req)
         req.add_header("x-isi-ifs-target-type", "container")
         req.add_header("x-isi-ifs-access-control", mode)
         try:

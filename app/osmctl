@@ -161,7 +161,8 @@ def cmd_array_add(args) -> None:
     if not password:
         import getpass
         password = getpass.getpass(f"password for {args.user}@{args.endpoint}: ")
-    client = OneFS(args.endpoint, args.port, args.user, password, verify=args.verify_tls)
+    client = OneFS(args.endpoint, args.port, args.user, password, verify=args.verify_tls,
+                   auth_type=args.auth_type)
     try:
         info = client.inspect()
     except ArrayError as exc:
@@ -174,6 +175,7 @@ def cmd_array_add(args) -> None:
         "port": args.port, "username": args.user, "password": password,
         "isi_path": args.path, "access_zone": args.zone,
         "skip_cert_validation": not args.verify_tls, "is_default": args.default,
+        "auth_type": args.auth_type, "auth_mode": info.get("auth_mode", "session"),
         "added": store.now(),
         "replication_certificate_id": info.get("synciq_cluster_certificate_id", ""),
         "onefs_version": info.get("onefs_version", ""),
@@ -181,16 +183,18 @@ def cmd_array_add(args) -> None:
     }
     store.update(lambda s: s["arrays"].update({aid: record}))
     inventory.invalidate()
-    print(f"added {record['name']} ({args.endpoint}), OneFS {record['onefs_version']}")
+    print(f"added {record['name']} ({args.endpoint}), OneFS {record['onefs_version']}, "
+          f"{record['auth_mode']} auth (isiAuthType {record['auth_type']})")
     if info.get("missing_privileges"):
         print("missing privileges: " + ", ".join(info["missing_privileges"]))
 
 
 def cmd_array_list(args) -> None:
     rows = [{"id": a["id"], "name": a["name"], "endpoint": a["endpoint"],
+             "auth": a.get("auth_mode", "session"),
              "path": a["isi_path"], "default": "yes" if a.get("is_default") else ""}
             for a in store.load()["arrays"].values()]
-    table(rows, ["id", "name", "endpoint", "path", "default"])
+    table(rows, ["id", "name", "endpoint", "auth", "path", "default"])
 
 
 # --- driver --------------------------------------------------------------------
@@ -538,6 +542,8 @@ def build_parser() -> argparse.ArgumentParser:
     aa.add_argument("--zone", default="System")
     aa.add_argument("--default", action="store_true")
     aa.add_argument("--create-path", action="store_true")
+    aa.add_argument("--auth-type", type=int, default=1, choices=[0, 1],
+                    help="1 session (OneFS 9.15 and later), 0 basic")
     aa.add_argument("--verify-tls", action="store_true")
     aa.set_defaults(func=cmd_array_add)
     ar.add_parser("list").set_defaults(func=cmd_array_list)
