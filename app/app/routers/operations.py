@@ -106,15 +106,35 @@ async def synciq_partial(request: Request):
 
 
 @router.get("/partials/action-form", response_class=HTMLResponse)
-async def action_form(request: Request, rg: str = "", cluster: str = "", action: str = "failover"):
+async def action_form(request: Request, rg: str = "", cluster: str = "", action: str = "failover",
+                      target: str = ""):
+    """The confirmation form, with the cluster picker and the command always in step."""
     state = store.load()
     spec = replication.ACTIONS.get(action, replication.ACTIONS["failover"])
-    others = [c for c in state["clusters"].values() if c["id"] != cluster]
+    clusters = list(state["clusters"].values())
+    others = [c for c in clusters if c["id"] != cluster]
+
+    # Which cluster the action should name by default.
+    #   failover and failback move service to the other site
+    #   reprotect runs where service is now, which after a failover is the other site
+    now = {}
+    if cluster and cluster in state["clusters"]:
+        now = replication.rg_state(state["clusters"][cluster]["kubeconfig"], rg)
+    failed_over = (now.get("link") or "") == "FAILEDOVER"
+    if action == "reprotect":
+        choices = clusters
+        default = (others[0]["id"] if others and failed_over else cluster)
+    else:
+        choices = others or clusters
+        default = choices[0]["id"] if choices else ""
+    chosen = target or default
+
     return templates.TemplateResponse(request, "partials/action_form.html", {
         "rg": rg, "cluster": cluster, "action": action, "spec": spec,
-        "clusters": list(state["clusters"].values()), "others": others,
+        "choices": choices, "chosen": chosen, "failed_over": failed_over,
+        "link": now.get("link", ""), "is_source": now.get("is_source"),
         "preview": replication.action_preview(rg, action,
-                                              others[0]["id"] if others and spec["needs_target"] else None),
+                                              chosen if spec["needs_target"] else None),
     })
 
 

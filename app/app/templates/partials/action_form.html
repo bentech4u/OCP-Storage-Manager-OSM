@@ -1,28 +1,45 @@
 <div class="card">
-  <div class="card-head"><div><h3>{{ spec.label }} - {{ rg }}</h3>
-    <div class="sub">{{ spec.help }}</div></div></div>
+  <div class="card-head"><div><h3>{{ spec.label }} - <span class="mono">{{ rg }}</span></h3>
+    <div class="sub">{{ spec.help }}</div></div>
+    {% if link %}<span class="pill {{ 'warn' if failed_over else 'ok' }}">{{ link }}</span>{% endif %}
+  </div>
+
+  {% if action == "reprotect" and not failed_over %}
+  <div class="banner warn"><span>⚠</span>
+    <div>This pair is not failed over, so there is nothing to reprotect. Reprotect belongs
+      straight after a failover.</div></div>
+  {% endif %}
+
   <form hx-post="/operations/action" hx-target="#output">
     <input type="hidden" name="rg" value="{{ rg }}">
     <input type="hidden" name="action" value="{{ action }}">
     <input type="hidden" name="cluster" value="{{ cluster }}">
     <div class="row">
       {% if spec.needs_target %}
-      <div class="field"><label>{{ "Run at" if action == "reprotect" else "Target cluster" }}</label>
-        <select name="target">
-          {% for c in (others if action != "reprotect" else clusters) %}
-            <option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}
+      <div class="field">
+        <label>{{ "Run at" if action == "reprotect" else "Target cluster" }}</label>
+        <select name="target" hx-get="/partials/action-form" hx-target="#output"
+                hx-include="closest form" hx-trigger="change"
+                hx-vals='{"rg": "{{ rg }}", "cluster": "{{ cluster }}", "action": "{{ action }}"}'>
+          {% for c in choices %}
+            <option value="{{ c.id }}" {% if c.id == chosen %}selected{% endif %}>{{ c.id }}</option>
+          {% endfor %}
         </select>
-        <div class="hint">This is the repctl cluster id, the same name used in the storage class.</div></div>
+        <div class="hint">
+          {% if action == "reprotect" %}The site that serves the volumes from now on.
+          {% else %}The site service moves to.{% endif %}
+          This is the repctl cluster id, the same name used in the storage class.</div>
+      </div>
       {% endif %}
       <div class="field" style="display:flex;align-items:flex-end">
         <div>
           {% if action == "failover" %}
           <div class="check"><input type="checkbox" id="unplanned" name="unplanned">
-            <label for="unplanned">Unplanned, the source site is unreachable</label></div>
+            <label for="unplanned">Unplanned, the current source is unreachable</label></div>
           {% endif %}
           {% if action == "failback" %}
           <div class="check"><input type="checkbox" id="discard" name="discard">
-            <label for="discard">Discard changes written at the target</label></div>
+            <label for="discard">Discard changes written at the other site</label></div>
           {% endif %}
         </div>
       </div>
