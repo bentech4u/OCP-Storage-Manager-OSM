@@ -268,3 +268,7 @@ details.fold > summary .chev { transition: transform .15s ease; color: var(--tex
 details.fold[open] > summary .chev { transform: rotate(90deg); color: var(--brand); }
 details.fold[open] > summary { margin-bottom: .5rem; }
 details.fold > summary .muted { font-weight: 450; }
+
+/* settings that only matter once their switch is on */
+#replication-settings { display: none; }
+.check:has(#rep:checked) ~ #replication-settings { display: block; }

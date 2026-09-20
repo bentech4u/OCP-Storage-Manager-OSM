@@ -313,7 +313,9 @@
       <div class="row three">
         <div class="field"><label>Name</label><input type="text" name="name" value="isilon"></div>
         <div class="field"><label>Cluster</label>
-          <select name="source_cluster">{% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select></div>
+          <select name="source_cluster" data-pair="target_cluster">
+            {% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select>
+          <div class="hint">Where the class is created. For a pair, this is the source site.</div></div>
         <div class="field"><label>Array</label>
           <select name="array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
       </div>
@@ -324,10 +326,13 @@
       </div>
       <div class="check"><input type="checkbox" id="rep" name="replicated">
         <label for="rep">Replicated pair, created on both clusters</label></div>
-      <fieldset style="margin-top:.6rem"><legend>Replication settings</legend>
+      <fieldset id="replication-settings" style="margin-top:.6rem"><legend>Replication settings</legend>
         <div class="row three">
           <div class="field"><label>Target cluster</label>
-            <select name="target_cluster">{% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select></div>
+            <select name="target_cluster">
+              {% for c in clusters %}<option value="{{ c.id }}"
+                {% if clusters|length > 1 and loop.last %}selected{% endif %}>{{ c.id }}</option>{% endfor %}</select>
+            <div class="hint">Must differ from the cluster above; this name becomes remoteClusterID.</div></div>
           <div class="field"><label>Target array</label>
             <select name="target_array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
           <div class="field"><label>Recovery point objective</label>
@@ -340,9 +345,13 @@
           <div class="field"><label>Volume group prefix</label><input type="text" name="volume_group_prefix" value="csi-prod">
             <div class="hint">Prefix, namespace, address and objective must stay under 63 characters.</div></div>
           <div class="field"><label>Target NFS address</label><input type="text" name="target_az_service_ip" placeholder="defaults to the target array endpoint"></div>
-          <div class="field" style="display:flex;align-items:flex-end">
+          <div class="field">
+            <label>Grouping</label>
             <div class="check"><input type="checkbox" id="ignorens" name="ignore_namespaces">
-              <label for="ignorens">One volume group for all namespaces</label></div></div>
+              <label for="ignorens">One volume group for all namespaces</label></div>
+            <div class="hint">Off, the default, gives each namespace its own volume group and its
+              own SyncIQ policy, so namespaces fail over independently. On puts every volume from
+              this class into a single group, so they all fail over together.</div></div>
         </div>
       </fieldset>
       <button class="btn primary">Create storage class</button>

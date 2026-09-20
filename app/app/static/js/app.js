@@ -46,6 +46,16 @@
     if (window.confirm(q)) evt.detail.issueRequest(true);
   });
 
+  // Keep a paired pair of cluster pickers on two different clusters.
+  document.addEventListener("change", function (evt) {
+    const pair = evt.target.getAttribute && evt.target.getAttribute("data-pair");
+    if (!pair) return;
+    const other = document.querySelector('[name="' + pair + '"]');
+    if (!other || other.value !== evt.target.value) return;
+    const choice = Array.from(other.options).find(function (o) { return o.value !== evt.target.value; });
+    if (choice) other.value = choice.value;
+  });
+
   // Refresh panels that ask for it when a job ends.
   document.body.addEventListener("job-finished", function () {
     document.querySelectorAll("[data-refresh-on-job]").forEach(function (el) {
