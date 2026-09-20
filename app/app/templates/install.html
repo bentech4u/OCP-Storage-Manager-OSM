@@ -210,8 +210,9 @@
               <option value="1" selected>session, isiAuthType 1</option>
               <option value="0">basic, isiAuthType 0</option>
             </select>
-            <div class="hint">OneFS 9.15 and later accept session only. Older releases accept both.
-              The driver install follows whatever works here.</div></div>
+            <div class="hint">OneFS 9.15 ships with basic switched off. To use it, run
+              <span class="mono">isi_gconfig -t web-config auth_basic=true</span> on the array and
+              restart apache2. The driver install follows whatever works here.</div></div>
           <div class="field"></div><div class="field"></div>
         </div>
         <div class="check"><input type="checkbox" id="skipcert" name="skip_cert_validation" checked>
