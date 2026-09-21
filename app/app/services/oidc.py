@@ -73,6 +73,11 @@ def _describe(body: dict, status: int) -> str:
     first = detail.split("\r\n")[0][:200]
     if "AADSTS50126" in detail:
         return "that username or password was rejected by Entra."
+    if "AADSTS50034" in detail:
+        return "that account does not exist in this tenant."
+    if "AADSTS90002" in detail:
+        return ("the account's domain is not part of this tenant, so Entra could not find it. "
+                "Check the address, or the tenant id in Setup.")
     if "AADSTS50076" in detail or "AADSTS50079" in detail:
         return ("this account needs multi-factor authentication, which the password form cannot "
                 "do. Use the Microsoft sign-in page instead.")
