@@ -122,6 +122,14 @@ secrets/    array credentials and certificates    (git-ignored)
 .repctl/    repctl's own cluster store            (git-ignored)
 ```
 
+## Exercised end to end
+
+On a two-site lab of OpenShift 4.22 clusters and OneFS 9.15 simulators: driver installed by both
+the CSM Operator and the Helm chart; volumes provisioned with quotas, snapshots and online
+expansion; encrypted SyncIQ replication in both directions at once, one group each way; a failover
+with the data verified at the far site, a reprotect, and a move back; sign-in with a local account
+and with Microsoft Entra ID, including the multi-factor path through the provider's page.
+
 ## Notes from the field
 
 These were checked against Dell's documentation and the driver source rather than assumed, and
