@@ -67,9 +67,11 @@ def read_session_value(token: str) -> Optional[dict]:
         return None
 
 
-def set_session_cookie(response, token: str) -> None:
+def set_session_cookie(response, token: str, secure: bool = False) -> None:
+    """Secure is set when the browser reached us over https, directly or through a proxy."""
     response.set_cookie(
-        SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax"
+        SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax",
+        secure=secure,
     )
 
 

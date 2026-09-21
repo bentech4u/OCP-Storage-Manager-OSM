@@ -133,7 +133,7 @@ async def login_submit(request: Request, password: str = Form(""), confirm: str 
         token = security.make_session(expected, "password")
 
     response = RedirectResponse(next or "/", status_code=303)
-    security.set_session_cookie(response, token)
+    security.set_session_cookie(response, token, secure=request.url.scheme == "https")
     return response
 
 
@@ -175,7 +175,7 @@ async def oidc_callback(request: Request, code: str = "", state: str = "", error
             "that account is not in a group allowed here"), status_code=303)
     response = RedirectResponse(target, status_code=303)
     security.set_session_cookie(response, security.make_session(
-        oidc.account_name(claims), "entra", role))
+        oidc.account_name(claims), "entra", role), secure=request.url.scheme == "https")
     return response
 
 
