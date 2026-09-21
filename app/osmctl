@@ -418,6 +418,34 @@ def cmd_admin_revoke(args) -> None:
     print("session key rotated; everyone signed out (restart the service to apply)")
 
 
+def cmd_admin_tls(args) -> None:
+    """Make a self-signed certificate so the console can serve https."""
+    import subprocess as sp
+    from app.config import DATA_DIR
+    cert_dir = DATA_DIR / "tls"
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    cert, key = cert_dir / "console.crt", cert_dir / "console.key"
+    hosts = [h for h in [args.host] if h]
+    alt = ",".join(["DNS:" + h if not h.replace(".", "").isdigit() else "IP:" + h
+                    for h in hosts] + ["DNS:localhost", "IP:127.0.0.1"])
+    rc = sp.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                 "-keyout", str(key), "-out", str(cert), "-days", str(args.days),
+                 "-subj", f"/CN={hosts[0] if hosts else 'osm-console'}",
+                 "-addext", f"subjectAltName={alt}"], capture_output=True)
+    if rc.returncode != 0:
+        die(rc.stderr.decode()[:200])
+    for path in (cert, key):
+        path.chmod(0o600)
+    print(f"certificate: {cert}\nkey        : {key}")
+    print("\nServe https by adding these to the service, then restarting it:")
+    print(f"  systemctl set-environment  # or edit /etc/systemd/system/ocpstorage-console.service")
+    print(f"  Environment=OSM_TLS_CERT={cert}")
+    print(f"  Environment=OSM_TLS_KEY={key}")
+    print(f"  Environment=OSM_PORT=8443")
+    print("\nThe redirect address to register with the provider is then:")
+    print(f"  https://{hosts[0] if hosts else '<host>'}:8443/auth/oidc/callback")
+
+
 def cmd_admin_local_login(args) -> None:
     store.update(lambda s: s["setup"].update({"local_login": args.policy}))
     print(f"local account sign-in: {args.policy}")
@@ -646,6 +674,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="remove the password so the next visit sets a new one")
     fp.set_defaults(func=cmd_admin_forget_password)
     ad.add_parser("revoke-sessions", help="sign everyone out").set_defaults(func=cmd_admin_revoke)
+    tl = ad.add_parser("tls", help="create a self-signed certificate for https")
+    tl.add_argument("--host", default="", help="the name or address people browse to")
+    tl.add_argument("--days", type=int, default=825)
+    tl.set_defaults(func=cmd_admin_tls)
     ll = ad.add_parser("local-login", help="when the local account may be used in the browser")
     ll.add_argument("policy", choices=["always", "installer-host", "off"])
     ll.set_defaults(func=cmd_admin_local_login)
