@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from .. import security, store
 from ..config import (BIN_DIR, DATA_DIR, HELM_CHART_DIR, KUBECONFIG_DIR, LOG_DIR, ROOT,
                       SECRET_FILE, STATE_FILE, ensure_dirs)
-from ..services import inventory, replication, tools
+from ..services import inventory, oidc, replication, tools
 from ..templating import templates
 
 router = APIRouter()
@@ -94,22 +94,69 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
     return await setup_page(request, notice=notice)
 
 
+def _form_cfg(state: dict, **fields) -> dict:
+    """Test what is on screen, falling back to what is saved."""
+    cfg = dict(state["setup"]["oidc"])
+    for key, value in fields.items():
+        if value:
+            cfg[key] = value
+    for key in ("allowed_groups", "viewer_groups"):
+        if isinstance(cfg.get(key), str):
+            cfg[key] = [g.strip() for g in cfg[key].split(",") if g.strip()]
+    return cfg
+
+
 @router.post("/setup/oidc/test", response_class=HTMLResponse)
-async def test_oidc(request: Request):
-    cfg = store.load()["setup"]["oidc"]
-    if not cfg.get("issuer"):
-        return HTMLResponse('<div class="banner bad">Set the issuer or tenant first.</div>')
-    url = cfg["issuer"].rstrip("/") + "/.well-known/openid-configuration"
+async def test_oidc(request: Request, tenant_id: str = Form(""), issuer: str = Form(""),
+                    client_id: str = Form(""), scope: str = Form("")):
+    cfg = _form_cfg(store.load(), tenant_id=tenant_id.strip(), issuer=issuer.strip(),
+                    client_id=client_id.strip(), scope=scope.strip())
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            doc = json.load(resp)
-        ok = bool(doc.get("authorization_endpoint") and doc.get("token_endpoint"))
-        return HTMLResponse(
-            f'<div class="banner {"ok" if ok else "warn"}"><span>{"✓" if ok else "⚠"}</span>'
-            f'<div>Discovery document reached at {url}.<div class="small muted">'
-            f'authorization endpoint: {doc.get("authorization_endpoint", "missing")}</div></div></div>')
-    except Exception as exc:                               # noqa: BLE001
-        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>Could not read {url}: {exc}</div></div>')
+        resolved = oidc.issuer_for(cfg)
+        doc = oidc.discovery(cfg)
+    except oidc.OidcError as exc:
+        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{exc}</div></div>')
+    rows = [("issuer", resolved),
+            ("authorization endpoint", doc.get("authorization_endpoint", "missing")),
+            ("token endpoint", doc.get("token_endpoint", "missing")),
+            ("application id", cfg.get("client_id") or "not set"),
+            ("secret", "set" if cfg.get("client_secret") else "not set")]
+    body = "".join(f'<dt>{k}</dt><dd class="mono small">{v}</dd>' for k, v in rows)
+    return HTMLResponse(
+        '<div class="banner ok"><span>✓</span><div>The provider answered. '
+        'Now try a real account with the sign-in test below.'
+        f'<dl class="kv" style="margin-top:.5rem">{body}</dl></div></div>')
+
+
+@router.post("/setup/oidc/test-signin", response_class=HTMLResponse)
+async def test_oidc_signin(request: Request, probe_user: str = Form(""),
+                           probe_password: str = Form(""), tenant_id: str = Form(""),
+                           issuer: str = Form(""), client_id: str = Form(""),
+                           client_secret: str = Form(""), scope: str = Form(""),
+                           allowed_groups: str = Form(""), viewer_groups: str = Form("")):
+    """Sign in as the given account and report what came back, without changing the session."""
+    if not probe_user or not probe_password:
+        return HTMLResponse('<div class="banner bad"><span>⚠</span><div>Give an account and '
+                            'password to try.</div></div>')
+    cfg = _form_cfg(store.load(), tenant_id=tenant_id.strip(), issuer=issuer.strip(),
+                    client_id=client_id.strip(), client_secret=client_secret.strip(),
+                    scope=scope.strip(), allowed_groups=allowed_groups,
+                    viewer_groups=viewer_groups)
+    try:
+        claims = oidc.password_login(cfg, probe_user.strip(), probe_password)
+    except oidc.OidcError as exc:
+        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{exc}</div></div>')
+    groups = oidc.groups_of(claims)
+    role = oidc.role_for(cfg, claims)
+    rows = [("account", oidc.account_name(claims)),
+            ("groups in the token", ", ".join(groups) or "none were sent"),
+            ("would sign in as", role or "refused, no matching group")]
+    body = "".join(f'<dt>{k}</dt><dd class="small">{v}</dd>' for k, v in rows)
+    level = "ok" if role else "warn"
+    mark = "✓" if role else "⚠"
+    return HTMLResponse(f'<div class="banner {level}"><span>{mark}</span><div>'
+                        'The directory accepted that account. Nothing about your current session '
+                        f'changed.<dl class="kv" style="margin-top:.5rem">{body}</dl></div></div>')
 
 
 @router.post("/setup/alerts", response_class=HTMLResponse)

@@ -119,8 +119,25 @@
       </div>
       <div class="btn-row">
         <button class="btn primary">Save</button>
-        <button class="btn" hx-post="/setup/oidc/test" hx-target="#output">Test discovery</button>
+        <button class="btn" hx-post="/setup/oidc/test" hx-target="#output"
+                hx-include="closest form">Test discovery</button>
       </div>
+
+      <fieldset style="margin-top:1rem"><legend>Try an account</legend>
+        <p class="small muted">Signs in against the directory with what is on this form and reports
+          the groups and the role it would grant. Your own session is untouched, and nothing is
+          saved.</p>
+        <div class="row three">
+          <div class="field"><label>Work account</label>
+            <input type="text" name="probe_user" placeholder="someone@bentech.work"
+                   autocomplete="off"></div>
+          <div class="field"><label>Password</label>
+            <input type="password" name="probe_password" autocomplete="new-password"></div>
+          <div class="field" style="display:flex;align-items:flex-end">
+            <button class="btn" hx-post="/setup/oidc/test-signin" hx-target="#output"
+                    hx-include="closest form">Test sign-in</button></div>
+        </div>
+      </fieldset>
     </form>
   </div>
 </section>
