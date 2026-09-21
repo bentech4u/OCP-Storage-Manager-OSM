@@ -11,11 +11,16 @@ Group=ocpstorage
 WorkingDirectory=/opt/ocpstorage/app
 Environment=OSM_HOME=/opt/ocpstorage
 Environment=HOME=/opt/ocpstorage
-Environment=OSM_PORT=8800
+Environment=OSM_PORT=443
+Environment=OSM_TLS_CERT=/opt/ocpstorage/data/tls/console.crt
+Environment=OSM_TLS_KEY=/opt/ocpstorage/data/tls/console.key
 ExecStart=/opt/ocpstorage/app/run.sh
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+# lets the unprivileged service bind 443 without running as root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 PrivateTmp=true
 ProtectSystem=full
 ReadWritePaths=/opt/ocpstorage

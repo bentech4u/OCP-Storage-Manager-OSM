@@ -5,8 +5,9 @@ Replication across two sites. FastAPI on the server, server rendered pages with 
 live updates, no build step and no content delivery network.
 
 ```bash
-./run.sh                      # http://<host>:8800
-OSM_PORT=9000 ./run.sh     # another port
+./run.sh                                   # http://<host>:8800
+OSM_PORT=9000 ./run.sh                     # another port
+OSM_TLS_CERT=... OSM_TLS_KEY=... OSM_PORT=443 ./run.sh   # https
 ```
 
 On first start the console asks for an administrator password and stores a bcrypt hash of it.

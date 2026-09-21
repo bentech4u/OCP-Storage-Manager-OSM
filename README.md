@@ -67,8 +67,27 @@ systemctl enable --now ocpstorage-console
 ln -s /opt/ocpstorage/app/osmctl /usr/local/bin/osmctl
 ```
 
-Open `http://<host>:8800` and choose an administrator password on first visit. Put a reverse proxy
-with TLS in front before exposing it beyond the installer host.
+Open the console and choose an administrator password on first visit.
+
+By default it listens on 8800 over plain http, which is fine on an installer host. To serve https
+on 443 as an unprivileged service, make a certificate and give the unit the one capability that
+allows binding a low port:
+
+```bash
+osmctl admin tls --host <the name or address people browse to>
+```
+
+```ini
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Environment=OSM_PORT=443
+Environment=OSM_TLS_CERT=/opt/ocpstorage/data/tls/console.crt
+Environment=OSM_TLS_KEY=/opt/ocpstorage/data/tls/console.key
+```
+
+A self-signed certificate makes browsers warn; replace it with one from your own authority when
+this is more than a lab.
 
 ## osmctl
 
