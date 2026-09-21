@@ -113,6 +113,14 @@
           </select>
           <div class="hint">The local account is the way back in when the provider is unreachable.
             Even when switched off, <span class="mono">osmctl admin local-login always</span> restores it.</div></div>
+        <div class="field"><label>How directory accounts sign in</label>
+          <select name="method">
+            <option value="both" {% if setup.oidc.method == 'both' %}selected{% endif %}>both ways</option>
+            <option value="password" {% if setup.oidc.method == 'password' %}selected{% endif %}>password on this page</option>
+            <option value="redirect" {% if setup.oidc.method == 'redirect' %}selected{% endif %}>on the provider's page</option>
+          </select>
+          <div class="hint">The password form cannot satisfy multi-factor or conditional access;
+            the provider's page can, and the password never reaches this console.</div></div>
         <div class="field"><label>Scope requested</label>
           <input type="text" name="scope" value="{{ setup.oidc.scope }}" placeholder="openid profile email">
           <div class="hint">Add a groups scope here if your provider needs one.</div></div>

@@ -65,7 +65,7 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
                     client_secret: str = Form(""), redirect_url: str = Form(""),
                     allowed_groups: str = Form(""), viewer_groups: str = Form(""),
                     scope: str = Form("openid profile email"),
-                    local_login: str = Form("always")):
+                    method: str = Form("both"), local_login: str = Form("always")):
     if provider == "entra" and tenant_id and not issuer:
         issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
     cfg = {
@@ -75,7 +75,7 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
         "allowed_groups": [g.strip() for g in allowed_groups.split(",") if g.strip()],
         "viewer_groups": [g.strip() for g in viewer_groups.split(",") if g.strip()],
         "scope": scope.strip() or "openid profile email",
-        "method": "password",
+        "method": method if method in ("both", "password", "redirect") else "both",
     }
     # The local account is the way back in, so it is never removed here, and it cannot be
     # switched off until single sign-on is actually enabled.

@@ -75,6 +75,7 @@ def _login_page(request: Request, error: str = "", next: str = "/", chosen: str 
         "app_name": APP_NAME, "tagline": APP_TAGLINE,
         "oidc": state["setup"]["oidc"], "options": _sign_in_options(state), "chosen": chosen,
         "oidc_ready": state["setup"]["oidc"]["enabled"],
+        "oidc_method": state["setup"]["oidc"].get("method", "both"),
         "redirect_available": bool(state["setup"]["oidc"].get("redirect_url")),
     })
 
@@ -101,6 +102,9 @@ async def login_submit(request: Request, password: str = Form(""), confirm: str 
         token = security.make_session(state["setup"].get("admin_user", "admin"), "password")
     elif source == "entra":
         cfg = state["setup"]["oidc"]
+        if cfg.get("method") == "redirect":
+            return RedirectResponse(f"/auth/oidc/login?next={urllib.parse.quote(next or '/')}",
+                                    status_code=303)
         if not cfg.get("enabled"):
             return _login_page(request, error="Single sign-on is not enabled.", next=next,
                                chosen="local")

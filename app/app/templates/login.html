@@ -44,18 +44,23 @@
             sign-on, after signing in with the local account.</div>
           {% endif %}
         </div>
-        <div class="field"><label for="username">User</label>
-          <input id="username" type="text" name="username" autocomplete="username"
-                 placeholder="admin, or your work account" value="{{ 'admin' if chosen == 'local' else '' }}"></div>
-        <div class="field"><label for="password">Password</label>
-          <input id="password" type="password" name="password" required autocomplete="current-password"></div>
-        <button class="btn primary" style="width:100%">Sign in</button>
+        <div id="credentials">
+          <div class="field"><label for="username">User</label>
+            <input id="username" type="text" name="username" autocomplete="username"
+                   placeholder="admin, or your work account" value="{{ 'admin' if chosen == 'local' else '' }}"></div>
+          <div class="field"><label for="password">Password</label>
+            <input id="password" type="password" name="password" autocomplete="current-password"></div>
+        </div>
+        <div id="handoff" style="display:none" class="hint" style="margin-bottom:.6rem">
+          Signing in happens on the {{ "Microsoft" if oidc.provider == "entra" else "provider" }}
+          page, so no password is typed here.</div>
+        <button class="btn primary" style="width:100%" id="submit">Sign in</button>
       </form>
-      {% if oidc.enabled and redirect_available %}
+      {% if oidc.enabled and redirect_available and oidc_method == "both" %}
         <div style="text-align:center;margin:.9rem 0 .2rem" class="muted small">or</div>
         <a class="btn" style="width:100%" href="/auth/oidc/login?next={{ next }}">
           Sign in on the {{ "Microsoft" if oidc.provider == "entra" else "provider" }} page</a>
-        <div class="hint" style="text-align:center;margin-top:.4rem">Needed when the account uses
+        <div class="hint" style="text-align:center;margin-top:.4rem">Use this when the account has
           multi-factor authentication.</div>
       {% endif %}
     {% endif %}
@@ -67,7 +72,16 @@
     var source = document.getElementById("source");
     var user = document.getElementById("username");
     if (!source || !user) return;
+    var method = "{{ oidc_method }}";
+    var creds = document.getElementById("credentials");
+    var handoff = document.getElementById("handoff");
+    var submit = document.getElementById("submit");
     function sync() {
+      var handsOff = source.value === "entra" && method === "redirect";
+      if (creds) creds.style.display = handsOff ? "none" : "";
+      if (handoff) handoff.style.display = handsOff ? "" : "none";
+      if (submit) submit.textContent = handsOff ? "Continue to {{ "Microsoft" if oidc.provider == "entra" else "the provider" }}" : "Sign in";
+      document.getElementById("password").required = !handsOff;
       if (source.value === "local") { user.value = "admin"; user.setAttribute("readonly", "readonly"); }
       else { if (user.hasAttribute("readonly")) user.value = ""; user.removeAttribute("readonly"); }
     }
