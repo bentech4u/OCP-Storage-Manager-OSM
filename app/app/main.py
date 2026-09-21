@@ -49,15 +49,21 @@ async def healthz():
 
 
 def _sign_in_options(state: dict) -> list[dict]:
-    """What the list box on the login page offers."""
-    options = []
-    if state["setup"].get("local_login", "always") != "off" or not state["setup"]["oidc"]["enabled"]:
-        options.append({"value": "local", "label": "Local account"})
-    if state["setup"]["oidc"]["enabled"]:
-        cfg = state["setup"]["oidc"]
-        label = "Microsoft Entra ID" if cfg.get("provider") == "entra" else "Single sign-on"
-        options.append({"value": "entra", "label": label})
-    return options or [{"value": "local", "label": "Local account"}]
+    """What the list box on the login page offers.
+
+    The directory is always listed, even before it is configured, so it is obvious the
+    console supports it. An unconfigured entry is greyed out rather than hidden.
+    """
+    cfg = state["setup"]["oidc"]
+    local_off = state["setup"].get("local_login", "always") == "off" and cfg["enabled"]
+    label = "Microsoft Entra ID" if cfg.get("provider", "entra") == "entra" else "Single sign-on"
+    options = [
+        {"value": "local", "label": "Local account", "disabled": local_off,
+         "note": "switched off" if local_off else ""},
+        {"value": "entra", "label": label, "disabled": not cfg["enabled"],
+         "note": "" if cfg["enabled"] else "not configured yet"},
+    ]
+    return options
 
 
 def _login_page(request: Request, error: str = "", next: str = "/", chosen: str = "local",
@@ -68,6 +74,7 @@ def _login_page(request: Request, error: str = "", next: str = "/", chosen: str 
         "next": next, "error": error, "notice": notice,
         "app_name": APP_NAME, "tagline": APP_TAGLINE,
         "oidc": state["setup"]["oidc"], "options": _sign_in_options(state), "chosen": chosen,
+        "oidc_ready": state["setup"]["oidc"]["enabled"],
         "redirect_available": bool(state["setup"]["oidc"].get("redirect_url")),
     })
 

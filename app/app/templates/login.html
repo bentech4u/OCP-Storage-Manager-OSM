@@ -35,9 +35,14 @@
         <div class="field"><label for="source">Sign in with</label>
           <select id="source" name="source">
             {% for o in options %}
-              <option value="{{ o.value }}" {% if o.value == chosen %}selected{% endif %}>{{ o.label }}</option>
+              <option value="{{ o.value }}" {% if o.value == chosen %}selected{% endif %}
+                {% if o.disabled %}disabled{% endif %}>{{ o.label }}{% if o.note %} ({{ o.note }}){% endif %}</option>
             {% endfor %}
           </select>
+          {% if not oidc_ready %}
+          <div class="hint">Single sign-on appears here once it is configured under Setup, single
+            sign-on, after signing in with the local account.</div>
+          {% endif %}
         </div>
         <div class="field"><label for="username">User</label>
           <input id="username" type="text" name="username" autocomplete="username"
