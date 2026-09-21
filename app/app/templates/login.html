@@ -47,7 +47,8 @@
         <div id="credentials">
           <div class="field"><label for="username">User</label>
             <input id="username" type="text" name="username" autocomplete="username"
-                   placeholder="admin, or your work account" value="{{ 'admin' if chosen == 'local' else '' }}"></div>
+                   placeholder="admin, or your work account"
+                   value="{{ username or ('admin' if chosen == 'local' else '') }}"></div>
           <div class="field"><label for="password">Password</label>
             <input id="password" type="password" name="password" autocomplete="current-password"></div>
         </div>
@@ -56,12 +57,12 @@
           page, so no password is typed here.</div>
         <button class="btn primary" style="width:100%" id="submit">Sign in</button>
       </form>
-      {% if oidc.enabled and redirect_available and oidc_method == "both" %}
+      {% if show_redirect %}
         <div style="text-align:center;margin:.9rem 0 .2rem" class="muted small">or</div>
         <a class="btn" style="width:100%" href="/auth/oidc/login?next={{ next }}">
           Sign in on the {{ "Microsoft" if oidc.provider == "entra" else "provider" }} page</a>
         <div class="hint" style="text-align:center;margin-top:.4rem">Use this when the account has
-          multi-factor authentication.</div>
+          multi-factor authentication or a conditional access policy.</div>
       {% endif %}
     {% endif %}
   </div>
@@ -72,7 +73,7 @@
     var source = document.getElementById("source");
     var user = document.getElementById("username");
     if (!source || !user) return;
-    var method = "{{ oidc_method }}";
+    var method = "{{ 'both' if show_redirect and oidc_method == 'password' else oidc_method }}";
     var creds = document.getElementById("credentials");
     var handoff = document.getElementById("handoff");
     var submit = document.getElementById("submit");

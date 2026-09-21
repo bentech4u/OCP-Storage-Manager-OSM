@@ -67,16 +67,22 @@ def _sign_in_options(state: dict) -> list[dict]:
 
 
 def _login_page(request: Request, error: str = "", next: str = "/", chosen: str = "local",
-                notice: str = ""):
+                notice: str = "", username: str = "", offer_redirect: bool = False):
     state = store.load()
+    cfg = state["setup"]["oidc"]
+    # a route the operator cannot reach is no advice at all: when the password form cannot
+    # work for this account, offer the provider's page whatever the configured method
+    show_redirect = bool(cfg.get("redirect_url")) and cfg["enabled"] and (
+        offer_redirect or cfg.get("method", "both") == "both")
     return templates.TemplateResponse(request, "login.html", {
+        "username": username, "show_redirect": show_redirect,
         "first_run": not security.password_is_set(),
         "next": next, "error": error, "notice": notice,
         "app_name": APP_NAME, "tagline": APP_TAGLINE,
         "oidc": state["setup"]["oidc"], "options": _sign_in_options(state), "chosen": chosen,
         "oidc_ready": state["setup"]["oidc"]["enabled"],
         "oidc_method": state["setup"]["oidc"].get("method", "both"),
-        "redirect_available": bool(state["setup"]["oidc"].get("redirect_url")),
+        "redirect_available": bool(cfg.get("redirect_url")),
     })
 
 
@@ -111,11 +117,15 @@ async def login_submit(request: Request, password: str = Form(""), confirm: str 
         try:
             claims = oidc.password_login(cfg, username.strip(), password)
         except oidc.OidcError as exc:
-            return _login_page(request, error=str(exc), next=next, chosen="entra")
+            message = str(exc)
+            needs_browser = any(hint in message for hint in
+                                ("multi-factor", "conditional access"))
+            return _login_page(request, error=message, next=next, chosen="entra",
+                               username=username, offer_redirect=needs_browser)
         role = oidc.role_for(cfg, claims)
         if not role:
             groups = ", ".join(oidc.groups_of(claims)) or "none"
-            return _login_page(request, next=next, chosen="entra", error=(
+            return _login_page(request, next=next, chosen="entra", username=username, error=(
                 "that account signed in, but none of its groups are allowed here. It has: "
                 f"{groups}"))
         token = security.make_session(oidc.account_name(claims), "entra", role)
@@ -131,9 +141,11 @@ async def login_submit(request: Request, password: str = Form(""), confirm: str 
                 "local sign-in is limited to the installer host."))
         expected = state["setup"].get("admin_user", "admin")
         if username and username.strip() != expected:
-            return _login_page(request, error="Wrong user or password.", next=next)
+            return _login_page(request, error="Wrong user or password.", next=next,
+                               username=username)
         if not security.verify_password(password, state["setup"]["admin_password_hash"] or ""):
-            return _login_page(request, error="Wrong user or password.", next=next)
+            return _login_page(request, error="Wrong user or password.", next=next,
+                               username=username)
         token = security.make_session(expected, "password")
 
     response = RedirectResponse(next or "/", status_code=303)
