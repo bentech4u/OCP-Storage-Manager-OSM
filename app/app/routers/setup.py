@@ -27,6 +27,8 @@ async def setup_page(request: Request, notice: str = "", error: str = ""):
         "tools": tools.status(),
         "user": getattr(request.state, "user", "admin"),
         "password_set": bool(state["setup"].get("admin_password_hash")),
+        # the address this page was reached at is the one to register with the provider
+        "suggested_redirect": str(request.base_url).rstrip("/") + "/auth/oidc/callback",
         "paths": {
             "Application root": str(ROOT),
             "Data directory": str(DATA_DIR),
@@ -84,6 +86,8 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
                    "would have locked everyone out.")
     store.update(lambda s: s["setup"].update({"oidc": cfg, "local_login": local_login}))
     notice = "Single sign-on settings saved. The local account and its password are unchanged."
+    if cfg["redirect_url"] and not cfg["redirect_url"].startswith("https://"):
+        notice += (" The redirect address is not https, which Entra refuses except for localhost.")
     notice += warning
     if cfg["enabled"]:
         notice += " The provider now appears in the list on the login page."

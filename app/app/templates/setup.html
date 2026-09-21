@@ -88,7 +88,12 @@
         <div class="field"><label>Application (client) id</label><input type="text" name="client_id" value="{{ setup.oidc.client_id }}"></div>
         <div class="field"><label>Client secret</label><input type="password" name="client_secret" value="{{ setup.oidc.client_secret }}"></div>
         <div class="field"><label>Redirect address</label>
-          <input type="text" name="redirect_url" value="{{ setup.oidc.redirect_url }}" placeholder="https://installer.bentech.work:8800/auth/oidc/callback"></div>
+          <input type="text" name="redirect_url" id="redirect_url"
+                 value="{{ setup.oidc.redirect_url }}" placeholder="{{ suggested_redirect }}">
+          <div class="hint">Must match the app registration exactly. This console is being reached
+            at <span class="mono">{{ suggested_redirect }}</span>
+            <a href="#" onclick="document.getElementById('redirect_url').value='{{ suggested_redirect }}';return false">use it</a>.
+            Needed only for the provider's own sign-in page.</div></div>
       </div>
       <div class="row">
         <div class="field"><label>Groups with full control</label>
