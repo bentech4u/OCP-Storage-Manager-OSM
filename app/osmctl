@@ -418,6 +418,23 @@ def cmd_admin_revoke(args) -> None:
     print("session key rotated; everyone signed out (restart the service to apply)")
 
 
+def cmd_admin_link_repctl(args) -> None:
+    """Point /usr/local/bin/repctl at the console's cluster store."""
+    binary = Path(tools.which("repctl") or "")
+    real = Path("/opt/ocpstorage/bin/repctl")
+    from app.config import BIN_DIR
+    target = BIN_DIR / "repctl"
+    if not target.exists():
+        target = real if real.exists() else binary
+    if not target or not Path(target).exists():
+        die("repctl is not installed; run osmctl tools install-repctl")
+    link = tools._link_into_path(Path(target))
+    if not link:
+        die(f"could not write {tools.SYSTEM_BIN}/repctl; something else owns that name")
+    print(f"{link} now runs {target} against the console's store")
+    print("check it with: repctl cluster get")
+
+
 def cmd_admin_tls(args) -> None:
     """Make a self-signed certificate so the console can serve https."""
     import subprocess as sp
@@ -674,6 +691,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="remove the password so the next visit sets a new one")
     fp.set_defaults(func=cmd_admin_forget_password)
     ad.add_parser("revoke-sessions", help="sign everyone out").set_defaults(func=cmd_admin_revoke)
+    lr = ad.add_parser("link-repctl", help="make a shell see the console's clusters")
+    lr.set_defaults(func=cmd_admin_link_repctl)
     tl = ad.add_parser("tls", help="create a self-signed certificate for https")
     tl.add_argument("--host", default="", help="the name or address people browse to")
     tl.add_argument("--days", type=int, default=825)

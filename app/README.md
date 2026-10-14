@@ -154,10 +154,14 @@ owns the data directory, so the console keeps working either way.
 
 ## repctl state
 
-repctl reads `$HOME/.repctl/clusters` and offers no way to move it, so the console uses exactly
-that path. Clusters registered in the web pages are visible to `repctl` run by hand, and the
-other way round. Installing repctl also links it into `/usr/local/bin`, so plain `repctl cluster
-get` works from any shell.
+repctl reads `$HOME/.repctl/clusters` and offers no way to move it, so the console keeps its store
+inside its own root and runs repctl with `HOME` set there. Installing repctl writes a small wrapper
+at `/usr/local/bin/repctl` that does the same for a shell, which is what makes `repctl cluster get`
+show the console's clusters whoever runs it.
+
+If a shell reports `failed to find any valid config files in /root/.repctl/clusters` while the web
+pages list clusters, that wrapper is missing, usually because the binary was linked or copied by
+hand. Repair it with `osmctl admin link-repctl`, which `osmctl doctor` also checks for.
 
 ## Who can sign in
 

@@ -140,6 +140,18 @@ def doctor() -> list[dict]:
         except (ArrayError, Exception) as exc:                       # noqa: BLE001
             add("arrays", f"{array['name']} reachable", False, str(exc)[:120])
 
+    from .tools import SYSTEM_BIN, WRAPPER_MARK
+    shell_repctl = SYSTEM_BIN / "repctl"
+    shared = False
+    if shell_repctl.exists():
+        try:
+            shared = WRAPPER_MARK in shell_repctl.read_text()
+        except OSError:
+            shared = False
+    add("repctl", "a shell sees the same clusters", shared,
+        f"{shell_repctl} {'points at the console store' if shared else 'is missing or bypasses it'}",
+        "re-run the repctl install, or: osmctl admin link-repctl")
+
     listing = replication.list_clusters()
     known = {c["id"] for c in state["clusters"].values()}
     registered = {r["id"] for r in listing["rows"]}

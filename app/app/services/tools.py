@@ -100,18 +100,36 @@ def repctl_releases(limit: int = 15) -> list[dict]:
 SYSTEM_BIN = Path("/usr/local/bin")
 
 
+WRAPPER_MARK = "# installed by OSM"
+
+
 def _link_into_path(target: Path, name: str = "repctl") -> str:
-    """Also expose the tool on the system path, so a plain shell can run it."""
+    """Expose the tool on the system path, pointed at the console's own store.
+
+    repctl keeps its clusters in $HOME/.repctl and offers no way to move it, so a
+    bare symlink would read the calling user's home and show nothing, while the
+    console reads the store under its root. A small wrapper sets HOME for the call,
+    which makes a plain shell and the console agree.
+    """
+    from ..config import ROOT
     link = SYSTEM_BIN / name
+    script = (f"#!/bin/sh\n{WRAPPER_MARK}: run {name} against the console's cluster store\n"
+              f'export HOME="${{OSM_HOME:-{ROOT}}}"\n'
+              f'exec "{target}" "$@"\n')
     try:
         SYSTEM_BIN.mkdir(parents=True, exist_ok=True)
-        if link.is_symlink() or link.exists():
-            if link.is_symlink() and link.resolve() == target.resolve():
-                return str(link)
-            if not link.is_symlink():          # never replace a real binary
+        if link.exists() and not link.is_symlink():
+            existing = ""
+            try:
+                existing = link.read_text()
+            except OSError:
+                return ""                       # a real binary; leave it alone
+            if WRAPPER_MARK not in existing:
                 return ""
+        if link.is_symlink() or link.exists():
             link.unlink()
-        link.symlink_to(target)
+        link.write_text(script)
+        link.chmod(0o755)
         return str(link)
     except OSError:
         return ""
