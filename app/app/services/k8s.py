@@ -303,6 +303,69 @@ roleRef:
 """
 
 
+def trust_bundle(kubeconfig: str | Path, extra_ca_b64: str = "") -> tuple[str, bool]:
+    """The authority to put in a generated kubeconfig, and whether to skip verification.
+
+    The service account's token secret carries the cluster's internal authority, which
+    signs in-cluster traffic. It does not sign the API server's public certificate when
+    that comes from a corporate authority, so a kubeconfig built from it fails with
+    "certificate signed by unknown authority". The authority that the working kubeconfig
+    already uses is the one to keep; the internal one is appended, which costs nothing
+    and helps when the endpoint presents the internal chain instead.
+    """
+    view = ["config", "view", "--minify", "--raw", "-o"]
+    data = run(kubeconfig, view + ["jsonpath={.clusters[0].cluster.certificate-authority-data}"]
+               ).stdout.strip()
+    if not data:
+        path = run(kubeconfig, view + ["jsonpath={.clusters[0].cluster.certificate-authority}"]
+                   ).stdout.strip()
+        if path:
+            try:
+                data = base64.b64encode(Path(path).read_bytes()).decode()
+            except OSError:
+                data = ""
+    insecure = run(kubeconfig, view + ["jsonpath={.clusters[0].cluster.insecure-skip-tls-verify}"]
+                   ).stdout.strip() == "true"
+
+    pems = []
+    for chunk in (data, extra_ca_b64):
+        if not chunk:
+            continue
+        try:
+            text = base64.b64decode(chunk).decode()
+        except Exception:                                   # noqa: BLE001
+            continue
+        if text not in pems:
+            pems.append(text)
+    if not pems:
+        return "", True if insecure else False
+    merged = "\n".join(p.strip() for p in pems) + "\n"
+    return base64.b64encode(merged.encode()).decode(), insecure
+
+
+def _candidate_works(cluster_name: str, cluster_entry: dict, sa: str, token: str) -> bool:
+    """Does a kubeconfig built this way actually reach the API server?"""
+    import tempfile
+    cfg = {
+        "apiVersion": "v1", "kind": "Config", "preferences": {},
+        "clusters": [{"name": cluster_name, "cluster": cluster_entry}],
+        "users": [{"name": sa, "user": {"token": token}}],
+        "contexts": [{"name": cluster_name,
+                      "context": {"cluster": cluster_name, "user": sa}}],
+        "current-context": cluster_name,
+    }
+    handle, path = tempfile.mkstemp(prefix="osm-probe-", suffix=".kubeconfig")
+    try:
+        with os.fdopen(handle, "w") as fh:
+            yaml.safe_dump(cfg, fh, sort_keys=False)
+        return run(path, ["get", "--raw", "/version"], timeout=30).returncode == 0
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def create_sa_kubeconfig(job: Job, admin_kubeconfig: str | Path, cluster_name: str,
                          ns: str = SA_NAMESPACE, sa: str = SA_NAME,
                          role: str = SA_CLUSTER_ROLE) -> str:
@@ -343,15 +406,39 @@ def create_sa_kubeconfig(job: Job, admin_kubeconfig: str | Path, cluster_name: s
 
     server = run(admin_kubeconfig, ["config", "view", "--minify", "--raw", "-o",
                                     "jsonpath={.clusters[0].cluster.server}"]).stdout.strip()
-    if not ca:
-        ca = run(admin_kubeconfig, ["config", "view", "--minify", "--raw", "-o",
-                                    "jsonpath={.clusters[0].cluster.certificate-authority-data}"]
-                 ).stdout.strip()
-    cluster_entry: dict = {"server": server}
-    if ca:
-        cluster_entry["certificate-authority-data"] = ca
-    else:
-        cluster_entry["insecure-skip-tls-verify"] = True
+    merged, source_insecure = trust_bundle(admin_kubeconfig, ca)
+    from_kubeconfig, _ = trust_bundle(admin_kubeconfig)
+    # Which authority verifies the API server differs by cluster: a default install is
+    # signed by the cluster's internal one, a cluster with a corporate certificate is
+    # not. Rather than guess, each candidate is tried and the first that connects wins.
+    candidates: list[tuple[str, dict]] = []
+    if merged:
+        candidates.append(("the source kubeconfig's authority and the cluster's internal one",
+                           {"certificate-authority-data": merged}))
+    if ca and ca != merged:
+        candidates.append(("the cluster's internal authority", {"certificate-authority-data": ca}))
+    if from_kubeconfig and from_kubeconfig != merged:
+        candidates.append(("the source kubeconfig's authority",
+                           {"certificate-authority-data": from_kubeconfig}))
+    if source_insecure or not candidates:
+        candidates.append(("no verification, as in the source kubeconfig",
+                           {"insecure-skip-tls-verify": True}))
+
+    cluster_entry: dict = {}
+    chosen = ""
+    for description, entry in candidates:
+        candidate = dict(entry)
+        candidate["server"] = server
+        if _candidate_works(cluster_name, candidate, sa, token):
+            cluster_entry, chosen = candidate, description
+            break
+    if not cluster_entry:
+        raise ClusterError(
+            "the service account was created, but no certificate authority available here "
+            "verifies " + server + ". Add the authority that signs the API server to the "
+            "kubeconfig you gave this console, or re-add the cluster with a kubeconfig that "
+            "already trusts it.")
+    job.log(f"verified the new kubeconfig against {server} using {chosen}")
 
     cfg = {
         "apiVersion": "v1", "kind": "Config", "preferences": {},

@@ -203,9 +203,11 @@ def sa_kubeconfig(job: Job, kubeconfig: str, cluster_id: str) -> str | None:
     token = base64.b64decode(data["token"]).decode()
     server = run(kubeconfig, ["config", "view", "--minify", "--raw", "-o",
                               "jsonpath={.clusters[0].cluster.server}"]).stdout.strip()
+    from .k8s import trust_bundle
+    bundle, _ = trust_bundle(kubeconfig, data.get("ca.crt", ""))
     cluster_entry: dict = {"server": server}
-    if data.get("ca.crt"):
-        cluster_entry["certificate-authority-data"] = data["ca.crt"]
+    if bundle:
+        cluster_entry["certificate-authority-data"] = bundle
     else:
         cluster_entry["insecure-skip-tls-verify"] = True
     cfg = {
