@@ -26,6 +26,11 @@ database, so it runs happily on a disconnected installer host.
 * Runs failover, failback, reprotect, suspend, resume and sync against replication groups, and
   shows SyncIQ policies straight from the arrays.
 * Streams the output of every action into the page, and keeps the logs.
+* Watches the lot on a timer and raises alerts by mail or webhook when something breaks: a cluster
+  or array out of reach, a driver whose pods are not ready, a replication group in error, failed
+  over and so unprotected, without a link state, or past twice its recovery point objective, a
+  failed SyncIQ job, missing array privileges. Each is sent once when it starts, repeated only
+  after a quiet period, and sent again when it clears.
 
 Everything is also available from `osmctl`, so the console being down never blocks an install or
 a failover.
@@ -103,6 +108,7 @@ osmctl sc create --name isilon-replicated --cluster cluster-1 --array main \
 osmctl repctl setup --source cluster-1 --target cluster-2
 osmctl rg list
 osmctl rg failover --rg <group> --target cluster-2 --yes
+osmctl alerts list | check [--send] | test
 osmctl admin passwd                 # locked out of the console? set it here
 osmctl admin backup --out /backup/osm.tar.gz
 osmctl service restart | logs --follow
