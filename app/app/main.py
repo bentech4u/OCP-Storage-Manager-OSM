@@ -12,7 +12,7 @@ import urllib.parse
 from . import security, store
 from .config import APP_NAME, APP_TAGLINE, ensure_dirs
 from .routers import api, install, operations, setup
-from .services import oidc
+from .services import monitor, oidc
 from .templating import templates
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
@@ -41,6 +41,17 @@ async def require_login(request: Request, call_next):
                                 status_code=403)
         return JSONResponse({"detail": message}, status_code=403)
     return await call_next(request)
+
+
+@app.on_event("startup")
+def start_watcher() -> None:
+    """Evaluate the alert rules on a timer for as long as the console runs."""
+    monitor.start()
+
+
+@app.on_event("shutdown")
+def stop_watcher() -> None:
+    monitor.stop()
 
 
 @app.get("/healthz", include_in_schema=False)

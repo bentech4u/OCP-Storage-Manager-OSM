@@ -559,4 +559,6 @@ def summarize_rg(rg: dict) -> dict:
         "last_action": (status.get("lastAction") or {}).get("condition", ""),
         "is_source": (status.get("replicationLinkState") or {}).get("isSource"),
         "condition": conditions[0].get("condition", "") if conditions else "",
+        "conditions": [c.get("condition", "") for c in conditions][:5],
+        "last_update": (status.get("replicationLinkState") or {}).get("lastSuccessfulUpdate", ""),
     }

@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from .. import security, store
 from ..config import (BIN_DIR, DATA_DIR, HELM_CHART_DIR, KUBECONFIG_DIR, LOG_DIR, ROOT,
                       SECRET_FILE, STATE_FILE, ensure_dirs)
-from ..services import inventory, oidc, replication, tools
+from ..services import inventory, monitor, oidc, replication, tools
 from ..templating import templates
 
 router = APIRouter()
@@ -164,14 +164,16 @@ def save_alerts(request: Request, enabled: str = Form(""), smtp_host: str = Form
                       smtp_port: int = Form(25), smtp_user: str = Form(""),
                       smtp_password: str = Form(""), smtp_tls: str = Form(""),
                       mail_from: str = Form(""), mail_to: str = Form(""),
-                      webhook_url: str = Form("")):
+                      webhook_url: str = Form(""), check_seconds: int = Form(120),
+                      renotify_hours: int = Form(6)):
     cfg = {
         "enabled": enabled == "on", "smtp_host": smtp_host.strip(), "smtp_port": int(smtp_port),
         "smtp_user": smtp_user.strip(), "smtp_password": smtp_password,
         "smtp_tls": smtp_tls == "on", "mail_from": mail_from.strip(),
         "mail_to": [m.strip() for m in mail_to.split(",") if m.strip()],
         "webhook_url": webhook_url.strip(),
-        "events": ["replication_failure", "driver_unhealthy", "failover"],
+        "check_seconds": max(30, int(check_seconds)),
+        "renotify_hours": max(1, int(renotify_hours)),
     }
     store.update(lambda s: s["setup"].update({"alerts": cfg}))
     return setup_page(request, notice="Alert settings saved.")
@@ -223,6 +225,25 @@ def reset_console(request: Request, scope: str = Form("inventory"),
         '<div class="banner ok"><span>✓</span><div>Clusters, arrays and stored kubeconfigs were '
         'removed. Your password and settings were kept. Nothing was uninstalled from any cluster.'
         "</div></div>")
+
+
+@router.post("/setup/alerts/check", response_class=HTMLResponse)
+def check_alerts(request: Request):
+    """Evaluate the rules now and show what they find, without sending anything."""
+    result = monitor.run_once(send=False)
+    findings = result["findings"]
+    if not findings:
+        return HTMLResponse('<div class="banner ok"><span>✓</span><div>Nothing is wrong right '
+                            'now, so there is nothing to send.</div></div>')
+    rows = "".join(
+        f'<tr><td><span class="pill {"bad" if f["severity"] == "critical" else "warn"}">'
+        f'{f["severity"]}</span></td><td class="small"><strong>{f["title"]}</strong>'
+        f'<div class="muted">{f["detail"]}</div></td>'
+        f'<td class="small muted">{f.get("where", "")}</td></tr>' for f in findings)
+    return HTMLResponse(
+        f'<div class="card"><div class="card-head"><h3>{len(findings)} finding(s) right now</h3>'
+        '<span class="sub">nothing was sent; this is what an alert would say</span></div>'
+        f'<table><tbody>{rows}</tbody></table></div>')
 
 
 @router.post("/setup/alerts/test", response_class=HTMLResponse)

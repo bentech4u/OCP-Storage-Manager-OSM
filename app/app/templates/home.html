@@ -7,6 +7,35 @@
   <span class="spin htmx-indicator"></span> Refresh</button>
 {% endblock %}
 {% block content %}
+{% if alerts %}
+<div class="card" style="margin-bottom:1rem">
+  <div class="card-head">
+    <div><h2>Open alerts</h2>
+      <div class="sub">
+        {% if alerting %}the watcher is sending these{% else %}alerting is switched off, so these
+        are shown here only{% endif %}
+        {% if watcher.at %} &middot; last checked {{ watcher.at|ago }}{% endif %}
+        {% if watcher.error %} &middot; <span class="pill bad">{{ watcher.error }}</span>{% endif %}
+      </div></div>
+    <a class="btn sm" href="/setup#alerts">Alert settings</a>
+  </div>
+  <table>
+    <tbody>
+      {% for a in alerts %}
+      <tr>
+        <td style="width:7rem"><span class="pill {{ 'bad' if a.severity == 'critical' else 'warn' }}">
+          {{ a.severity }}</span></td>
+        <td><strong>{{ a.title }}</strong>
+          <div class="small muted">{{ a.detail }}</div>
+          {% if a.advice %}<div class="small muted">{{ a.advice }}</div>{% endif %}</td>
+        <td class="small muted nowrap">{{ a.where }}<div>since {{ a.first_seen|ago }}</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 {% if warnings %}
   {% for title, detail, link in warnings[:4] %}
   <div class="banner warn">

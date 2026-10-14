@@ -30,8 +30,8 @@ sys.path.insert(0, str(HERE))
 
 from app import store                                            # noqa: E402
 from app.config import DRIVER_NAMESPACE_DEFAULT, match_owner                  # noqa: E402
-from app.services import (installer, inventory, k8s, maintenance, replication,  # noqa: E402
-                          tools)
+from app.services import (installer, inventory, k8s, maintenance, monitor,  # noqa: E402
+                          replication, tools)
 from app.services.arrays import ArrayError, OneFS                # noqa: E402
 from app.services.jobs import run_sync                           # noqa: E402
 
@@ -528,6 +528,32 @@ def cmd_admin_restore(args) -> None:
     print("restart the service: osmctl service restart")
 
 
+def cmd_alerts(args) -> None:
+    if args.sub == "list":
+        rows = [{"severity": a["severity"], "title": a["title"][:58],
+                 "where": a.get("where", ""), "since": a.get("first_seen", "")[:19]}
+                for a in monitor.open_alerts()]
+        table(rows, ["severity", "title", "where", "since"])
+        return
+    if args.sub == "check":
+        result = monitor.run_once(send=args.send)
+        rows = [{"severity": f["severity"], "title": f["title"][:58], "where": f.get("where", "")}
+                for f in result["findings"]]
+        table(rows, ["severity", "title", "where"])
+        print(f"\n{len(result['findings'])} finding(s), "
+              f"{len(result['notified'])} new or repeated, {result['sent']} delivery attempt(s) "
+              f"{'sent' if args.send else 'suppressed, pass --send to deliver'}")
+        raise SystemExit(1 if result["findings"] else 0)
+    if args.sub == "test":
+        from app.services import notify
+        cfg = store.load()["setup"]["alerts"]
+        alert = {"key": "test", "severity": "warning", "title": "Test alert from OSM",
+                 "detail": "Sent by hand to check delivery.", "where": "osmctl",
+                 "first_seen": store.now(), "advice": ""}
+        for line in notify.deliver(cfg, alert):
+            print("  " + line)
+
+
 def cmd_doctor(args) -> None:
     checks = maintenance.doctor()
     area = None
@@ -714,6 +740,14 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--file", required=True)
     rt.add_argument("--force", action="store_true", help="overwrite existing state")
     rt.set_defaults(func=cmd_admin_restore)
+
+    al = sub.add_parser("alerts", help="what the watcher sees")
+    alsub = al.add_subparsers(dest="sub", required=True)
+    alsub.add_parser("list", help="alerts currently open").set_defaults(func=cmd_alerts)
+    ck = alsub.add_parser("check", help="evaluate the rules now")
+    ck.add_argument("--send", action="store_true", help="also deliver what it finds")
+    ck.set_defaults(func=cmd_alerts)
+    alsub.add_parser("test", help="send one test alert").set_defaults(func=cmd_alerts)
 
     sub.add_parser("doctor", help="check tools, paths, permissions, clusters and arrays").set_defaults(
         func=cmd_doctor)

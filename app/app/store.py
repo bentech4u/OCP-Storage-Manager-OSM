@@ -40,7 +40,8 @@ DEFAULT_STATE: dict[str, Any] = {
             "mail_from": "",
             "mail_to": [],
             "webhook_url": "",
-            "events": ["replication_failure", "driver_unhealthy", "failover"],
+            "check_seconds": 120,
+            "renotify_hours": 6,
         },
     },
     "clusters": {},      # id -> kubernetes cluster record

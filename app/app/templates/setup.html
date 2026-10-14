@@ -176,9 +176,23 @@
           <input type="text" name="webhook_url" value="{{ setup.alerts.webhook_url }}" placeholder="https://hooks.example.com/...">
           <div class="hint">A JSON message is posted for the same events.</div></div>
       </div>
-      <p class="small muted">Alerts cover replication failures, an unhealthy driver, and any failover that runs.</p>
+      <div class="row three">
+        <div class="field"><label>Check every</label>
+          <input type="number" name="check_seconds" value="{{ setup.alerts.check_seconds }}" min="30">
+          <div class="hint">Seconds between evaluations of the rules.</div></div>
+        <div class="field"><label>Repeat a standing alert every</label>
+          <input type="number" name="renotify_hours" value="{{ setup.alerts.renotify_hours }}" min="1">
+          <div class="hint">Hours. A problem is sent once when it starts, again at this interval
+            while it lasts, and once when it clears.</div></div>
+        <div class="field"></div>
+      </div>
+      <p class="small muted">Watched: a cluster or array that cannot be reached, a driver whose pods
+        are not ready, a replication group in error, failed over and so unprotected, without a link
+        state, or behind its recovery point objective, a failed SyncIQ job, and missing array
+        privileges.</p>
       <div class="btn-row">
         <button class="btn primary">Save</button>
+        <button class="btn" hx-post="/setup/alerts/check" hx-target="#output">Check now</button>
         <button class="btn" hx-post="/setup/alerts/test" hx-target="#output">Send a test</button>
       </div>
     </form>

@@ -4,7 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from ..services import inventory
+from ..services import inventory, monitor
+from .. import store
 from ..services.jobs import recent
 from ..templating import templates
 
@@ -32,6 +33,8 @@ def dashboard(request: Request, force: bool = False) -> HTMLResponse:
                              ", ".join(a["missing_privileges"]), "/install#arrays"))
     return templates.TemplateResponse(request, "home.html", {
         "page": "home", "data": data, "jobs": recent(8), "warnings": warnings,
+        "alerts": monitor.open_alerts(), "watcher": monitor.last_run(),
+        "alerting": store.load()["setup"]["alerts"].get("enabled", False),
     })
 
 
