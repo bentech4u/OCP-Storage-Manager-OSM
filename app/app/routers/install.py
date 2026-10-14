@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 
 from .. import store
 from ..config import DRIVER_NAMESPACE_DEFAULT, match_owner
-from ..services import installer, inventory, k8s, replication, tools
+from ..services import audit, installer, inventory, k8s, replication, tools
 from ..services.arrays import ArrayError, OneFS
 from ..services.jobs import Job, start
 from ..templating import templates
@@ -213,6 +213,9 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
         "connected_via": connect_via, "connected_as": info.get("user", ""),
     }
     store.update(lambda s: s["clusters"].update({cid: record}))
+    audit.record("cluster.add", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), target=cid, outcome="ok",
+                 detail=f"{info.get('server','')} as {info.get('user','')} via {connect_via}")
     inventory.invalidate()
     who = info.get("user") or "the supplied identity"
     admin = "with cluster-admin" if info.get("cluster_admin") else "WITHOUT cluster-admin"
@@ -222,6 +225,9 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
 
 @router.post("/install/clusters/{cid}/delete", response_class=HTMLResponse)
 def delete_cluster(request: Request, cid: str):
+    audit.record("cluster.remove", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), target=cid, outcome="ok",
+                 detail="removed from the console; nothing uninstalled")
     store.update(lambda s: s["clusters"].pop(cid, None))
     inventory.invalidate()
     return _page(request, notice=f"Cluster {cid} removed from the console (nothing was uninstalled).")
@@ -306,6 +312,9 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
         "onefs_version": info.get("onefs_version", ""), "path_ok": path_ok,
     }
     store.update(lambda s: s["arrays"].update({aid: record}))
+    audit.record("array.add", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), target=record["name"], outcome="ok",
+                 detail=f"{endpoint}:{port} as {username}, {record['auth_mode']} auth")
     inventory.invalidate()
     missing = ", ".join(info.get("missing_privileges", []))
     supported = info.get("auth_supported", {})
@@ -325,6 +334,8 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
 
 @router.post("/install/arrays/{aid}/delete", response_class=HTMLResponse)
 def delete_array(request: Request, aid: str):
+    audit.record("array.remove", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), target=aid, outcome="ok")
     store.update(lambda s: s["arrays"].pop(aid, None))
     inventory.invalidate()
     return _page(request, notice=f"Array {aid} removed from the console.")

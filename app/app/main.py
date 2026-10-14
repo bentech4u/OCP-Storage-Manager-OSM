@@ -11,8 +11,8 @@ import urllib.parse
 
 from . import security, store
 from .config import APP_NAME, APP_TAGLINE, ensure_dirs
-from .routers import api, install, operations, setup
-from .services import monitor, oidc
+from .routers import api, audit as audit_router, install, operations, setup
+from .services import audit, monitor, oidc
 from .templating import templates
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
@@ -129,6 +129,9 @@ def login_submit(request: Request, password: str = Form(""), confirm: str = Form
             claims = oidc.password_login(cfg, username.strip(), password)
         except oidc.OidcError as exc:
             message = str(exc)
+            audit.record("auth.refused", actor=username, via="entra", outcome="failed",
+                         detail=message[:200],
+                         address=request.client.host if request.client else "")
             needs_browser = any(hint in message for hint in
                                 ("multi-factor", "conditional access"))
             return _login_page(request, error=message, next=next, chosen="entra",
@@ -155,10 +158,18 @@ def login_submit(request: Request, password: str = Form(""), confirm: str = Form
             return _login_page(request, error="Wrong user or password.", next=next,
                                username=username)
         if not security.verify_password(password, state["setup"]["admin_password_hash"] or ""):
+            audit.record("auth.refused", actor=username or "admin", via="password",
+                         outcome="failed", detail="wrong password",
+                         address=request.client.host if request.client else "")
             return _login_page(request, error="Wrong user or password.", next=next,
                                username=username)
         token = security.make_session(expected, "password")
 
+    session = security.read_session_value(token) or {}
+    audit.record("auth.signin", actor=session.get("u", username or "admin"),
+                 via=session.get("via", source), outcome="ok",
+                 detail=f"role {session.get('role', 'admin')}",
+                 address=request.client.host if request.client else "")
     response = RedirectResponse(next or "/", status_code=303)
     security.set_session_cookie(response, token, secure=request.url.scheme == "https")
     return response
@@ -207,7 +218,9 @@ def oidc_callback(request: Request, code: str = "", state: str = "", error: str 
 
 
 @app.get("/logout")
-def logout():
+def logout(request: Request):
+    audit.record("auth.signout", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), outcome="ok")
     response = RedirectResponse("/login", status_code=303)
     security.clear_session_cookie(response)
     return response
@@ -216,6 +229,7 @@ def logout():
 app.include_router(operations.router)
 app.include_router(install.router)
 app.include_router(setup.router)
+app.include_router(audit_router.router)
 app.include_router(api.router)
 
 

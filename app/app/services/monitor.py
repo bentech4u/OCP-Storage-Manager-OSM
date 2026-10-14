@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from .. import store
-from . import inventory, notify, replication
+from . import audit, inventory, notify, replication
 
 CHECK_SECONDS_DEFAULT = 120
 RENOTIFY_HOURS_DEFAULT = 6
@@ -213,6 +213,9 @@ def run_once(send: bool | None = None) -> dict:
 
     sent = 0
     for alert in outgoing:
+        audit.record("alert." + ("cleared" if alert["severity"] == "cleared" else "raised"),
+                     actor="watcher", via="timer", target=alert.get("where", ""),
+                     outcome=alert["severity"], detail=alert["title"], key=alert["key"])
         if not send:
             continue
         for line in notify.deliver(cfg, alert):

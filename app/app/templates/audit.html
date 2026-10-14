@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Audit - {{ app_name }}{% endblock %}
+{% block crumbs %}Audit{% endblock %}
+{% block heading %}Who did what{% endblock %}
+{% block topactions %}
+<button class="btn sm" hx-post="/audit/verify" hx-target="#output">Verify the record</button>
+{% endblock %}
+{% block content %}
+<div id="output"></div>
+
+<div class="card" style="margin-bottom:1rem">
+  <form method="get" action="/audit">
+    <div class="row three">
+      <div class="field"><label>Who</label>
+        <input type="text" name="actor" value="{{ q.actor }}" placeholder="admin, or a work account"></div>
+      <div class="field"><label>What</label>
+        <select name="action">
+          <option value="">everything</option>
+          {% for a in actions %}<option value="{{ a }}" {% if a == q.action %}selected{% endif %}>{{ a }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label>Where</label>
+        <input type="text" name="target" value="{{ q.target }}" placeholder="a cluster, group or array"></div>
+    </div>
+    <div class="row three">
+      <div class="field"><label>From</label>
+        <input type="text" name="since" value="{{ q.since }}" placeholder="2026-10-01"></div>
+      <div class="field"><label>To</label>
+        <input type="text" name="until" value="{{ q.until }}" placeholder="2026-10-31"></div>
+      <div class="field"><label>Containing</label>
+        <input type="text" name="text" value="{{ q.text }}" placeholder="failover"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary">Search</button>
+      <a class="btn" href="/audit">Clear</a>
+      <div class="spacer"></div>
+      <a class="btn" href="/audit/export.csv{% if download %}?{{ download }}{% endif %}">Export CSV</a>
+      <a class="btn" href="/audit/export.jsonl{% if download %}?{{ download }}{% endif %}">Export JSON lines</a>
+    </div>
+  </form>
+</div>
+
+<div class="card pad-0">
+  <div class="card-head" style="padding:1rem 1.1rem 0">
+    <h2>{{ rows|length }} entr{{ "y" if rows|length == 1 else "ies" }}</h2>
+    <span class="sub">newest first; each entry carries the hash of the one before it</span>
+  </div>
+  <table>
+    <thead><tr><th>When</th><th>Who</th><th>What</th><th>Where</th><th>Outcome</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="small nowrap">{{ r.at[:19].replace("T", " ") }}<div class="muted">{{ r.at|ago }}</div></td>
+        <td class="small">{{ r.actor }}{% if r.via %}<div class="muted">{{ r.via }}</div>{% endif %}</td>
+        <td class="small mono">{{ r.action }}</td>
+        <td class="small muted truncate" title="{{ r.target }}">{{ r.target or "-" }}</td>
+        <td>
+          {% if r.outcome in ("ok", "cleared") %}<span class="pill ok">{{ r.outcome }}</span>
+          {% elif r.outcome in ("failed", "critical") %}<span class="pill bad">{{ r.outcome }}</span>
+          {% elif r.outcome %}<span class="pill warn">{{ r.outcome }}</span>{% endif %}
+        </td>
+        <td class="small">{{ r.detail }}
+          {% if r.extra and r.extra.address %}<div class="muted">from {{ r.extra.address }}</div>{% endif %}
+          {% if r.job %}<div class="muted mono">job {{ r.job }}</div>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">Nothing recorded yet, or nothing matches that search.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

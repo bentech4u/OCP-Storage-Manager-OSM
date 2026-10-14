@@ -122,6 +122,7 @@ def start(title: str, kind: str, target: Callable[[Job], None], cluster: str | N
         else:
             if job.status == "running":
                 job.finish(True)
+        _audit_job(job)
 
     threading.Thread(target=runner, daemon=True, name=f"job-{job.id}").start()
     return job
@@ -150,7 +151,20 @@ def run_sync(title: str, kind: str, target: Callable[["Job"], None],
     else:
         if job.status == "running":
             job.finish(True)
+    _audit_job(job)
     return job
+
+
+def _audit_job(job: Job) -> None:
+    """Record the outcome of anything the console ran."""
+    try:
+        from . import audit
+        audit.record(f"job.{job.kind}", actor=job.actor or "system", via=job.via,
+                     target=job.cluster or "", outcome=job.status, detail=job.title,
+                     job=job.id, started=job.started, finished=job.finished or "",
+                     log=str(job.log_path))
+    except Exception:                                  # noqa: BLE001
+        pass
 
 
 def get(job_id: str) -> Optional[Job]:

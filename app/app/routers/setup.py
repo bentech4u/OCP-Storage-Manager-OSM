@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from .. import security, store
 from ..config import (BIN_DIR, DATA_DIR, HELM_CHART_DIR, KUBECONFIG_DIR, LOG_DIR, ROOT,
                       SECRET_FILE, STATE_FILE, ensure_dirs)
-from ..services import inventory, monitor, oidc, replication, tools
+from ..services import audit, inventory, monitor, oidc, replication, tools
 from ..templating import templates
 
 router = APIRouter()
@@ -55,6 +55,9 @@ def change_password(request: Request, new: str = Form(...), confirm: str = Form(
     if new != confirm:
         return setup_page(request, error="The new passwords do not match.")
     store.update(lambda s: s["setup"].update({"admin_password_hash": security.hash_password(new)}))
+    audit.record("setup.password", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), outcome="ok",
+                 detail="local administrator password " + ("set" if not existing else "changed"))
     return setup_page(request,
                             notice="Password set." if not existing else "Password changed.")
 
@@ -85,6 +88,11 @@ def save_oidc(request: Request, enabled: str = Form(""), provider: str = Form("e
         warning = (" Local sign-in was left on, because single sign-on is not enabled yet and that "
                    "would have locked everyone out.")
     store.update(lambda s: s["setup"].update({"oidc": cfg, "local_login": local_login}))
+    audit.record("setup.signon", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), outcome="ok",
+                 detail=f"single sign-on {'enabled' if cfg['enabled'] else 'disabled'}, "
+                        f"method {cfg['method']}, local sign-in {local_login}",
+                 tenant=cfg.get("tenant_id", ""), client=cfg.get("client_id", ""))
     notice = "Single sign-on settings saved. The local account and its password are unchanged."
     if cfg["redirect_url"] and not cfg["redirect_url"].startswith("https://"):
         notice += (" The redirect address is not https, which Entra refuses except for localhost.")
@@ -176,6 +184,10 @@ def save_alerts(request: Request, enabled: str = Form(""), smtp_host: str = Form
         "renotify_hours": max(1, int(renotify_hours)),
     }
     store.update(lambda s: s["setup"].update({"alerts": cfg}))
+    audit.record("setup.alerts", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), outcome="ok",
+                 detail=f"alerting {'on' if cfg['enabled'] else 'off'}, every "
+                        f"{cfg['check_seconds']}s, repeat after {cfg['renotify_hours']}h")
     return setup_page(request, notice="Alert settings saved.")
 
 
@@ -214,6 +226,8 @@ def reset_console(request: Request, scope: str = Form("inventory"),
         state["installs"] = {}
         state["jobs"] = []
 
+    audit.record("setup.reset", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), outcome="ok", detail=f"scope {scope}")
     store.update(wipe)
     for path in (KUBECONFIG_DIR, replication.REPCTL_HOME):
         if path.exists():

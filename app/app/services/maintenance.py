@@ -20,7 +20,7 @@ from .k8s import ClusterError, probe
 from .tools import status as tool_status
 
 SERVICE = "ocpstorage-console"
-BACKUP_MEMBERS = ["data/state.json", "data/kubeconfigs", ".repctl", "secrets"]
+BACKUP_MEMBERS = ["data/state.json", "data/kubeconfigs", "data/audit", ".repctl", "secrets"]
 
 
 def now_stamp() -> str:
@@ -205,6 +205,12 @@ def doctor() -> list[dict]:
     add("repctl", "a shell sees the same clusters", shared,
         f"{shell_repctl} {'points at the console store' if shared else 'is missing or bypasses it'}",
         "re-run the repctl install, or: osmctl admin link-repctl")
+
+    from . import audit as audit_service
+    chain = audit_service.verify()
+    add("audit", "the record is intact", chain["ok"],
+        chain["problem"] or f"{chain['checked']} entries",
+        "investigate: an entry was altered or removed")
 
     listing = replication.list_clusters()
     known = {c["id"] for c in state["clusters"].values()}
