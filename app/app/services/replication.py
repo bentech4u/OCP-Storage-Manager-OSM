@@ -309,6 +309,73 @@ def controller_config(kubeconfig: str) -> dict:
         return {}
 
 
+def volume_group_of(protection_group: str) -> str:
+    """The folder a protection group points at, which is also the SyncIQ policy name."""
+    path = (protection_group or "").split("::", 1)[-1]
+    return path.rstrip("/").rsplit("/", 1)[-1]
+
+
+def recovery_point(group: dict, arrays: list[dict]) -> dict:
+    """How far behind a group is, measured from the array that sends.
+
+    The array knows when a job last succeeded and what delay the driver asked for.
+    Reading the gap alone would mislead: these policies run when the source changes,
+    so an idle volume shows a long gap while losing nothing. The gap is therefore only
+    called drifting or breached when the link or the last job says something is wrong.
+    """
+    import time
+    wanted = volume_group_of(group.get("protection_group", "")).replace(".", "-")
+    link = (group.get("link_state") or "").upper()
+    for array in arrays:
+        for policy in array.get("policies") or []:
+            if (policy.get("name") or "").replace(".", "-") != wanted:
+                continue
+            objective = policy.get("objective_seconds") or 0
+            last = policy.get("last_success") or 0
+            job = (policy.get("last_job_state") or "").lower()
+            healthy = job in ("finished", "running", "") and link in ("SYNCHRONIZED", "")
+            out = {"known": True, "policy": policy["name"], "objective": objective,
+                   "array": array.get("name", ""), "enabled": policy.get("enabled", True),
+                   "job": policy.get("last_job_state", ""), "lag": None,
+                   "last_success": int(last) if last else 0}
+            if not last:
+                out["state"] = "unknown"
+                out["note"] = "the policy has never completed a job"
+                return out
+            lag = max(0, int(time.time()) - int(last))
+            out["lag"] = lag
+            if not policy.get("enabled", True):
+                out["state"], out["note"] = "breached", "the policy is disabled on the array"
+            elif job in ("failed", "needs_attention"):
+                out["state"], out["note"] = "breached", f"the last job {job}"
+            elif objective and lag > objective * 2 and not healthy:
+                out["state"], out["note"] = "breached", f"the link reports {link or 'nothing'}"
+            elif objective and lag > objective and not healthy:
+                out["state"], out["note"] = "drifting", f"the link reports {link or 'nothing'}"
+            elif objective and lag > objective:
+                out["state"] = "quiet"
+                out["note"] = ("nothing has changed at the source since then; these policies run "
+                               "on change, so this is not data at risk")
+            else:
+                out["state"], out["note"] = "ok", "within the objective"
+            return out
+    return {"known": False, "policy": "", "objective": 0, "lag": None, "state": "unknown",
+            "array": "", "note": "no SyncIQ policy matches this group yet", "job": "",
+            "enabled": True, "last_success": 0}
+
+
+def describe_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "unknown"
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    if seconds < 172800:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
 def replication_groups(kubeconfig: str) -> list[dict]:
     from .k8s import summarize_rg
     try:
@@ -419,6 +486,141 @@ EXPECTED_ANNOTATION = {
     "reprotect": ("REPROTECT_LOCAL",),
     "suspend": ("SUSPEND",), "resume": ("RESUME",), "sync": ("SYNC",),
 }
+
+
+def preflight(action: str, rg: str, source_cluster: str, target_cluster: str) -> list[dict]:
+    """What to know before moving service between sites.
+
+    Each check is pass, warn or fail. A failure is something that will stop the move
+    working, a warning is something that will hurt afterwards, such as writers still
+    running or no claim waiting at the far side.
+    """
+    from .. import store
+    from . import inventory
+    from .k8s import ClusterError, run_json
+
+    checks: list[dict] = []
+
+    def add(what: str, level: str, detail: str, fix: str = "") -> None:
+        checks.append({"what": what, "level": level, "detail": detail, "fix": fix})
+
+    state = store.load()
+    data = inventory.snapshot()
+    clusters = {c["id"]: c for c in data["clusters"]}
+    source, target = clusters.get(source_cluster, {}), clusters.get(target_cluster, {})
+    arrays = {a.get("name"): a for a in data["arrays"]}
+
+    # the group itself
+    source_record = state["clusters"].get(source_cluster, {})
+    if source_record:
+        running = busy(source_record["kubeconfig"], rg)
+        add("no action already running", "fail" if running else "pass",
+            running or "the group is idle", "wait for it to finish")
+        now = rg_state(source_record["kubeconfig"], rg)
+        link = (now.get("link") or "").upper()
+        if action == "failover":
+            ok = link == "SYNCHRONIZED"
+            add("link synchronized", "pass" if ok else "warn", link or "unknown",
+                "unplanned failover accepts this; a planned one should wait for a sync")
+        elif action == "reprotect":
+            ok = link == "FAILEDOVER"
+            add("the pair is failed over", "pass" if ok else "fail", link or "unknown",
+                "reprotect belongs straight after a failover")
+
+    groups = replication_groups(source_record["kubeconfig"]) if source_record else []
+    group = next((g for g in groups if g["name"] == rg), {})
+    if group:
+        point = recovery_point(group, data["arrays"])
+        if point.get("known"):
+            level = {"ok": "pass", "quiet": "pass", "unknown": "warn",
+                     "drifting": "warn", "breached": "warn"}[point["state"]]
+            add("recovery point", level,
+                f"last sync {describe_age(point['lag'])} ago against "
+                f"{describe_age(point['objective'])}, {point['note']}",
+                "run Sync now first so the far side is current")
+
+    # the site taking over
+    if not target:
+        add("target cluster known", "fail", f"{target_cluster} is not registered here")
+        return checks
+    add("target cluster reachable", "pass" if target.get("reachable") else "fail",
+        target.get("server", "") if target.get("reachable") else target.get("error", ""),
+        "the driver there must be able to act")
+    driver = target.get("driver") or {}
+    ready = driver.get("controller_ready") and driver.get("node_ready")
+    add("driver running at the target", "pass" if ready else "fail",
+        f"{len([p for p in driver.get('pods', []) if p['all_ready']])} of "
+        f"{len(driver.get('pods', []))} pods ready", "install or repair the driver first")
+    add("replication controller at the target",
+        "pass" if driver.get("replication_controller") else "warn",
+        "running" if driver.get("replication_controller") else "not seen",
+        "without it the group will not change role")
+
+    # the array taking over
+    # the array at the far end is named in the group's remote protection group
+    remote_array = (group.get("remote_protection_group", "") or "").split("::")[0]
+    far_side = arrays.get(remote_array)
+    if not far_side and remote_array:
+        far_side = {"name": remote_array, "reachable": False,
+                    "error": "this array is not registered in the console"}
+    if far_side:
+        add("target array reachable", "pass" if far_side.get("reachable") else "fail",
+            far_side.get("name", "") + (" " + far_side.get("endpoint", "")),
+            "the copy lives there")
+        licences = far_side.get("licenses") or {}
+        synciq = licences.get("SYNCIQ", "not listed")
+        add("SyncIQ licensed at the target",
+            "pass" if synciq in ("Licensed", "Evaluation", "Activated") else "fail", synciq,
+            "replication cannot be re-established without it")
+
+    # what is waiting on each side
+    if source_record:
+        try:
+            pvs = run_json(source_record["kubeconfig"], [
+                "get", "pv", "-l",
+                f"replication.storage.dell.com/replicationGroupName={rg}"]).get("items", [])
+        except ClusterError:
+            pvs = []
+        claims = [(pv.get("spec", {}).get("claimRef") or {}) for pv in pvs]
+        names = [f"{c.get('namespace')}/{c.get('name')}" for c in claims if c.get("name")]
+        writers = 0
+        for claim in claims:
+            if not claim.get("name"):
+                continue
+            try:
+                pods = run_json(source_record["kubeconfig"], [
+                    "-n", claim.get("namespace", "default"), "get", "pods"]).get("items", [])
+            except ClusterError:
+                pods = []
+            for pod in pods:
+                for volume in pod.get("spec", {}).get("volumes", []):
+                    if (volume.get("persistentVolumeClaim") or {}).get(
+                            "claimName") == claim.get("name"):
+                        writers += 1
+        add("writers stopped at the source", "pass" if not writers else "warn",
+            "nothing is mounting these volumes" if not writers
+            else f"{writers} pod(s) still mounting {', '.join(names[:3])}",
+            "scale those workloads to zero so the last sync captures everything")
+
+    target_record = state["clusters"].get(target_cluster, {})
+    if target_record:
+        try:
+            far_pvs = run_json(target_record["kubeconfig"], [
+                "get", "pv", "-l",
+                f"replication.storage.dell.com/replicationGroupName={rg}"]).get("items", [])
+        except ClusterError:
+            far_pvs = []
+        bound = [pv for pv in far_pvs if pv.get("status", {}).get("phase") == "Bound"]
+        add("claims waiting at the target", "pass" if bound else "warn",
+            f"{len(far_pvs)} volume(s) there, {len(bound)} already claimed",
+            "after the move, use Create claims at the standby site")
+    return checks
+
+
+def create_target_claims(job: Job, rg: str, namespace: str) -> int:
+    """Ask repctl to create the claims for a group at the site that now serves it."""
+    job.log(f"creating claims for {rg} in namespace {namespace}")
+    return run_repctl(job, ["--rg", rg, "create", "pvc", "-t", namespace, "--dry-run=false"])
 
 
 def act(job: Job, rg: str, action: str, target_cluster: str | None = None,

@@ -25,6 +25,15 @@ database, so it runs happily on a disconnected installer host.
   exchange and the peer config map.
 * Runs failover, failback, reprotect, suspend, resume and sync against replication groups, and
   shows SyncIQ policies straight from the arrays.
+* Tracks the recovery point per group: how long since the last successful sync, against the
+  objective the driver set, read from the array rather than inferred. An idle volume is reported as
+  idle rather than behind, because these policies run when the source changes.
+* Runs pre-flight checks before any move between sites: whether an action is already running, the
+  link state, the recovery point, the far cluster, its driver and replication controller, the far
+  array and its SyncIQ licence, whether writers are still running at the source, and whether claims
+  are waiting at the target. A move with failed checks is refused unless it is explicitly overridden,
+  which is what a real outage at the other site looks like.
+* Creates the claims at the site now serving a group, which a failover does not do by itself.
 * Streams the output of every action into the page, and keeps the logs.
 * Watches the lot on a timer and raises alerts by mail or webhook when something breaks: a cluster
   or array out of reach, a driver whose pods are not ready, a replication group in error, failed
@@ -108,6 +117,8 @@ osmctl sc create --name isilon-replicated --cluster cluster-1 --array main \
 osmctl repctl setup --source cluster-1 --target cluster-2
 osmctl rg list
 osmctl rg failover --rg <group> --target cluster-2 --yes
+osmctl rg preflight --rg <group> --source cluster-1 --target cluster-2
+osmctl rg claims --rg <group> --namespace t24
 osmctl alerts list | check [--send] | test
 osmctl admin passwd                 # locked out of the console? set it here
 osmctl admin backup --out /backup/osm.tar.gz

@@ -228,6 +228,8 @@ class OneFS:
             "target_path": p.get("target_path"), "action": p.get("action"),
             "last_job_state": p.get("last_job_state"), "schedule": p.get("schedule"),
             "encrypted": bool(p.get("target_certificate_id")),
+            "last_success": p.get("last_success"),      # epoch seconds, from the array
+            "objective_seconds": p.get("job_delay"),    # what the driver set from the class
         } for p in data.get("policies", [])]
 
     def sync_target_policies(self) -> list[dict]:

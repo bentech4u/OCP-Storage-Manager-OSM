@@ -553,6 +553,7 @@ def summarize_rg(rg: dict) -> dict:
         "created": rg["metadata"].get("creationTimestamp", ""),
         "remote_cluster": spec.get("remoteClusterId", ""),
         "protection_group": spec.get("protectionGroupId", ""),
+        "remote_protection_group": spec.get("remoteProtectionGroupId", ""),
         "action": spec.get("action", ""),
         "state": status.get("state", ""),
         "link_state": (status.get("replicationLinkState") or {}).get("state", ""),

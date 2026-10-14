@@ -44,8 +44,30 @@
         </div>
       </div>
     </div>
+    {% if checks %}
+    <fieldset style="margin:.2rem 0 .8rem"><legend>Before this runs</legend>
+      <table>
+        <tbody>
+          {% for c in checks %}
+          <tr>
+            <td style="width:5rem"><span class="pill {{ {'pass':'ok','warn':'warn','fail':'bad'}[c.level] }}">
+              {{ c.level }}</span></td>
+            <td class="small">{{ c.what }}<div class="muted">{{ c.detail }}</div></td>
+            <td class="small muted">{% if c.level != 'pass' %}{{ c.fix }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if failures %}
+      <div class="check" style="margin-top:.6rem">
+        <input type="checkbox" id="override" name="override">
+        <label for="override">{{ failures|length }} check(s) failed. Run it anyway, which is what
+          a real outage at the other site looks like.</label></div>
+      {% endif %}
+    </fieldset>
+    {% endif %}
     <div class="console" style="max-height:60px;margin-bottom:.7rem">{{ preview }}</div>
     <button class="btn {{ 'danger' if spec.danger else 'primary' }}"
-      data-confirm="{{ spec.label }} on {{ rg }}. Continue?">Run {{ spec.label|lower }}</button>
+      data-confirm="{{ spec.label }} on {{ rg }}{% if failures %}, with {{ failures|length }} failed check(s){% endif %}. Continue?">Run {{ spec.label|lower }}</button>
   </form>
 </div>

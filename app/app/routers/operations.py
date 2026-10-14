@@ -59,6 +59,7 @@ def _groups() -> list[dict]:
         volumes = k8s.replicated_volumes(cluster["kubeconfig"])
         return cid, cluster, rgs, volumes
 
+    data = inventory.snapshot()
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(collect, state["clusters"].items()))
 
@@ -81,6 +82,12 @@ def _groups() -> list[dict]:
     groups = []
     for entry in merged.values():
         sides = entry["sides"]
+        source_side = next((x for x in sides if x["is_source"]), sides[0])
+        point = replication.recovery_point(
+            {"protection_group": source_side["path"],
+             "link_state": source_side["link"]}, data["arrays"])
+        point["lag_text"] = replication.describe_age(point.get("lag"))
+        point["objective_text"] = replication.describe_age(point.get("objective") or None)
         namespaces = sorted({c.split("/")[0] for s in sides for c in s["claims"] if "/" in c})
         for side in sides:
             side["parts"] = _split_path(side["path"], namespaces)
@@ -98,6 +105,7 @@ def _groups() -> list[dict]:
             "last_action": next((s["last_action"] for s in sides if s["last_action"]), ""),
             "namespace": next((s["parts"]["namespace"] for s in sides
                                if s["parts"].get("namespace")), ""),
+            "point": point,
         })
     return groups
 
@@ -166,10 +174,16 @@ def action_form(request: Request, rg: str = "", cluster: str = "", action: str =
         default = choices[0]["id"] if choices else ""
     chosen = target or default
 
+    checks = []
+    if action in ("failover", "failback", "reprotect") and cluster and chosen:
+        checks = replication.preflight(action, rg, cluster, chosen)
     return templates.TemplateResponse(request, "partials/action_form.html", {
         "rg": rg, "cluster": cluster, "action": action, "spec": spec,
         "choices": choices, "chosen": chosen, "failed_over": failed_over,
         "link": now.get("link", ""), "is_source": now.get("is_source"),
+        "checks": checks,
+        "failures": [c for c in checks if c["level"] == "fail"],
+        "warnings": [c for c in checks if c["level"] == "warn"],
         "preview": replication.action_preview(rg, action,
                                               chosen if spec["needs_target"] else None),
     })
@@ -178,9 +192,20 @@ def action_form(request: Request, rg: str = "", cluster: str = "", action: str =
 @router.post("/operations/action", response_class=HTMLResponse)
 def run_action(request: Request, rg: str = Form(...), action: str = Form(...),
                      cluster: str = Form(""), target: str = Form(""),
-                     unplanned: str = Form(""), discard: str = Form("")):
+                     unplanned: str = Form(""), discard: str = Form(""),
+                     override: str = Form("")):
     if action not in replication.ACTIONS:
         return HTMLResponse('<div class="banner bad">Unknown action.</div>')
+    if action in ("failover", "failback", "reprotect") and override != "on":
+        failures = [c for c in replication.preflight(action, rg, cluster, target)
+                    if c["level"] == "fail"]
+        if failures:
+            rows = "".join(f'<li>{c["what"]}: {c["detail"]}</li>' for c in failures)
+            return HTMLResponse(
+                '<div class="banner bad"><span>⚠</span><div><strong>Not run.</strong> '
+                f'{len(failures)} check(s) failed:<ul>{rows}</ul>'
+                'Open the action again and tick the box to run it anyway, which is what a real '
+                'outage at the other site looks like.</div></div>')
     preview = replication.action_preview(rg, action, target or None,
                                          unplanned == "on", discard == "on")
 
@@ -197,6 +222,26 @@ def run_action(request: Request, rg: str = Form(...), action: str = Form(...),
 
     job = start(f"{action} {rg}", "replication-action", work, cluster=cluster or None, actor=getattr(request.state, "user", ""),
                  via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+@router.post("/operations/claims", response_class=HTMLResponse)
+def create_claims(request: Request, rg: str = Form(...), namespace: str = Form(...),
+                  cluster: str = Form("")):
+    """Create the claims for a group at the site now serving it."""
+    if not namespace.strip():
+        return HTMLResponse('<div class="banner bad"><span>⚠</span><div>Name the namespace the '
+                            'claims belong in.</div></div>')
+
+    def work(job: Job):
+        rc = replication.create_target_claims(job, rg, namespace.strip())
+        if rc != 0:
+            raise RuntimeError("repctl could not create the claims; see the output above")
+        inventory.invalidate()
+
+    job = start(f"create claims for {rg} in {namespace}", "claims", work, cluster=cluster or None,
+                actor=getattr(request.state, "user", ""), via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 

@@ -367,6 +367,21 @@ def cmd_rg_list(args) -> None:
     table(rows, ["cluster", "group", "role", "remote", "link", "state"])
 
 
+def cmd_rg_claims(args) -> None:
+    job = run_sync(f"create claims for {args.rg}", "claims",
+                   lambda j: replication.create_target_claims(j, args.rg, args.namespace))
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+def cmd_rg_preflight(args) -> None:
+    checks = replication.preflight(args.action, args.rg, args.source, args.target)
+    table([{"check": c["what"], "result": c["level"], "detail": c["detail"][:60]}
+           for c in checks], ["check", "result", "detail"])
+    failed = [c for c in checks if c["level"] == "fail"]
+    print(f"\n{len(checks)} check(s), {len(failed)} failed")
+    raise SystemExit(1 if failed else 0)
+
+
 def cmd_rg_action(args) -> None:
     preview = replication.action_preview(args.rg, args.action, args.target,
                                          args.unplanned, args.discard)
@@ -807,6 +822,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("rg", help="replication groups").add_subparsers(dest="sub", required=True)
     g.add_parser("list").set_defaults(func=cmd_rg_list)
+    cl = g.add_parser("claims", help="create the claims for a group at the serving site")
+    cl.add_argument("--rg", required=True)
+    cl.add_argument("--namespace", required=True)
+    cl.set_defaults(func=cmd_rg_claims)
+    pf = g.add_parser("preflight", help="what to know before moving service")
+    pf.add_argument("--rg", required=True)
+    pf.add_argument("--source", required=True)
+    pf.add_argument("--target", required=True)
+    pf.add_argument("--action", default="failover",
+                    choices=["failover", "failback", "reprotect"])
+    pf.set_defaults(func=cmd_rg_preflight)
     for name in replication.ACTIONS:
         ac = g.add_parser(name, help=replication.ACTIONS[name]["help"])
         ac.add_argument("--rg", required=True)

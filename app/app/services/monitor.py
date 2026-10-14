@@ -121,16 +121,15 @@ def evaluate() -> list[dict]:
                     "Check the SyncIQ policy on the source array."))
 
             if group.get("is_source"):
-                rpo = next((r for r in RPO_SECONDS if (group.get("protection_group") or "")
-                            .endswith(r + "/")), "")
-                age = _age(group.get("last_update") or "")
-                if rpo and age and age.total_seconds() > RPO_SECONDS[rpo] * RPO_GRACE:
+                point = replication.recovery_point(group, data["arrays"])
+                if point["state"] in ("drifting", "breached"):
                     found.append(_finding(
-                        f"rg:{name}:rpo", "critical",
+                        f"rg:{name}:rpo", "critical" if point["state"] == "breached" else "warning",
                         f"Replication group {name} is behind its recovery point objective",
-                        f"last successful update {int(age.total_seconds() // 60)} minutes ago, "
-                        f"against an objective of {rpo.replace('_', ' ').lower()}", where,
-                        "Run a sync, and check the SyncIQ job reports on the source array."))
+                        f"last successful sync {replication.describe_age(point['lag'])} ago "
+                        f"against an objective of {replication.describe_age(point['objective'])}"
+                        f", {point['note']}", where,
+                        "Run a sync, and read the policy report on the source array."))
 
     for array in data["arrays"]:
         name = array.get("name") or array.get("id")
