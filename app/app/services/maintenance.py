@@ -63,8 +63,51 @@ def service_logs(lines: int = 50, follow: bool = False) -> int:
     return subprocess.run(cmd).returncode
 
 
-def listening(port: int = 8800) -> bool:
-    with socket.socket() as sock:
+def service_environment() -> dict:
+    """The environment systemd starts the console with, so checks use the real settings."""
+    proc = subprocess.run(["systemctl", "show", SERVICE, "-p", "Environment", "--value"],
+                          capture_output=True, text=True)
+    found = {}
+    for item in (proc.stdout or "").split():
+        if "=" in item:
+            key, _, value = item.partition("=")
+            found[key] = value
+    return found
+
+
+def console_endpoint() -> tuple[int, bool]:
+    """Port the console listens on, and whether it speaks https."""
+    env = service_environment()
+    port = env.get("OSM_PORT") or os.environ.get("OSM_PORT") or "8800"
+    tls = bool(env.get("OSM_TLS_CERT") or os.environ.get("OSM_TLS_CERT"))
+    try:
+        return int(port), tls
+    except ValueError:
+        return 8800, tls
+
+
+def listening(port: int | None = None, tls: bool | None = None) -> bool:
+    """Ask the console for its health, over whichever port and scheme it is using."""
+    if port is None or tls is None:
+        found_port, found_tls = console_endpoint()
+        port = found_port if port is None else port
+        tls = found_tls if tls is None else tls
+    import ssl as _ssl
+    import urllib.error
+    import urllib.request
+    scheme = "https" if tls else "http"
+    ctx = None
+    if tls:
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE          # the console may hold a self-signed pair
+    try:
+        with urllib.request.urlopen(f"{scheme}://127.0.0.1:{port}/healthz", timeout=5,
+                                    context=ctx):
+            return True
+    except Exception:                              # noqa: BLE001
+        pass
+    with socket.socket() as sock:                  # a plain connection still tells us something
         sock.settimeout(3)
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
@@ -97,10 +140,18 @@ def doctor() -> list[dict]:
 
     # Running osmctl as root used to leave files the service user could not read.
     uid = DATA_DIR.stat().st_uid if DATA_DIR.exists() else os.getuid()
-    stray = [str(f) for f in DATA_DIR.rglob("*") if f.is_file() and f.stat().st_uid != uid]
-    add("permissions", "everything in data owned by the service user", not stray,
-        f"{len(stray)} file(s) with another owner" if stray else "consistent",
-        f"chown -R {uid}:{uid} {DATA_DIR}")
+    stray = [f for f in DATA_DIR.rglob("*") if f.is_file() and f.stat().st_uid != uid]
+    try:
+        import pwd
+        owner = pwd.getpwuid(uid).pw_name
+    except (KeyError, ImportError):
+        owner = str(uid)
+    detail = "consistent"
+    if stray:
+        names = ", ".join(str(f.relative_to(DATA_DIR)) for f in stray[:3])
+        detail = f"{len(stray)} file(s) not owned by {owner}: {names}"
+    add("permissions", f"everything in data owned by {owner}", not stray, detail,
+        f"chown -R {owner}:{owner} {DATA_DIR}")
 
     state = store.load()
     add("console", "administrator password set",
@@ -108,7 +159,10 @@ def doctor() -> list[dict]:
         "osmctl admin passwd")
     add("console", "service running", service("is-active")[1] == "active",
         service("is-active")[1], f"systemctl start {SERVICE}")
-    add("console", "answering on 8800", listening(), "", f"journalctl -u {SERVICE}")
+    port, tls = console_endpoint()
+    add("console", f"answering on {port}", listening(port, tls),
+        ("https" if tls else "http") + f"://127.0.0.1:{port}/healthz",
+        f"journalctl -u {SERVICE}")
 
     for cluster in state["clusters"].values():
         kubeconfig = Path(cluster.get("kubeconfig", ""))

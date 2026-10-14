@@ -487,7 +487,9 @@ def cmd_admin_show(args) -> None:
         {"item": "local sign-in", "value": state["setup"].get("local_login", "always")},
         {"item": "alerts", "value": "on" if state["setup"]["alerts"]["enabled"] else "off"},
         {"item": "service", "value": maintenance.service("is-active")[1]},
-        {"item": "listening on 8800", "value": "yes" if maintenance.listening() else "no"},
+        {"item": "listening", "value": (lambda p, t: f"{'yes' if maintenance.listening(p, t) else 'no'}"
+                                        f" on {p} ({'https' if t else 'http'})")(
+            *maintenance.console_endpoint())},
     ]
     table(rows, ["item", "value"])
 
