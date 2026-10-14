@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.get("/setup", response_class=HTMLResponse)
-async def setup_page(request: Request, notice: str = "", error: str = ""):
+def setup_page(request: Request, notice: str = "", error: str = ""):
     state = store.load()
     return templates.TemplateResponse(request, "setup.html", {
         "page": "setup", "setup": state["setup"], "notice": notice, "error": error,
@@ -42,25 +42,25 @@ async def setup_page(request: Request, notice: str = "", error: str = ""):
 
 
 @router.post("/setup/password", response_class=HTMLResponse)
-async def change_password(request: Request, new: str = Form(...), confirm: str = Form(...),
+def change_password(request: Request, new: str = Form(...), confirm: str = Form(...),
                           current: str = Form("")):
     state = store.load()
     existing = state["setup"].get("admin_password_hash")
     # A console with no password yet, for instance right after a full reset, sets one here
     # rather than demanding a current password that does not exist.
     if existing and not security.verify_password(current, existing):
-        return await setup_page(request, error="The current password is wrong.")
+        return setup_page(request, error="The current password is wrong.")
     if len(new) < 8:
-        return await setup_page(request, error="The new password needs at least 8 characters.")
+        return setup_page(request, error="The new password needs at least 8 characters.")
     if new != confirm:
-        return await setup_page(request, error="The new passwords do not match.")
+        return setup_page(request, error="The new passwords do not match.")
     store.update(lambda s: s["setup"].update({"admin_password_hash": security.hash_password(new)}))
-    return await setup_page(request,
+    return setup_page(request,
                             notice="Password set." if not existing else "Password changed.")
 
 
 @router.post("/setup/oidc", response_class=HTMLResponse)
-async def save_oidc(request: Request, enabled: str = Form(""), provider: str = Form("entra"),
+def save_oidc(request: Request, enabled: str = Form(""), provider: str = Form("entra"),
                     tenant_id: str = Form(""), issuer: str = Form(""), client_id: str = Form(""),
                     client_secret: str = Form(""), redirect_url: str = Form(""),
                     allowed_groups: str = Form(""), viewer_groups: str = Form(""),
@@ -91,7 +91,7 @@ async def save_oidc(request: Request, enabled: str = Form(""), provider: str = F
     notice += warning
     if cfg["enabled"]:
         notice += " The provider now appears in the list on the login page."
-    return await setup_page(request, notice=notice)
+    return setup_page(request, notice=notice)
 
 
 def _form_cfg(state: dict, **fields) -> dict:
@@ -107,7 +107,7 @@ def _form_cfg(state: dict, **fields) -> dict:
 
 
 @router.post("/setup/oidc/test", response_class=HTMLResponse)
-async def test_oidc(request: Request, tenant_id: str = Form(""), issuer: str = Form(""),
+def test_oidc(request: Request, tenant_id: str = Form(""), issuer: str = Form(""),
                     client_id: str = Form(""), scope: str = Form("")):
     cfg = _form_cfg(store.load(), tenant_id=tenant_id.strip(), issuer=issuer.strip(),
                     client_id=client_id.strip(), scope=scope.strip())
@@ -129,7 +129,7 @@ async def test_oidc(request: Request, tenant_id: str = Form(""), issuer: str = F
 
 
 @router.post("/setup/oidc/test-signin", response_class=HTMLResponse)
-async def test_oidc_signin(request: Request, probe_user: str = Form(""),
+def test_oidc_signin(request: Request, probe_user: str = Form(""),
                            probe_password: str = Form(""), tenant_id: str = Form(""),
                            issuer: str = Form(""), client_id: str = Form(""),
                            client_secret: str = Form(""), scope: str = Form(""),
@@ -160,7 +160,7 @@ async def test_oidc_signin(request: Request, probe_user: str = Form(""),
 
 
 @router.post("/setup/alerts", response_class=HTMLResponse)
-async def save_alerts(request: Request, enabled: str = Form(""), smtp_host: str = Form(""),
+def save_alerts(request: Request, enabled: str = Form(""), smtp_host: str = Form(""),
                       smtp_port: int = Form(25), smtp_user: str = Form(""),
                       smtp_password: str = Form(""), smtp_tls: str = Form(""),
                       mail_from: str = Form(""), mail_to: str = Form(""),
@@ -174,11 +174,11 @@ async def save_alerts(request: Request, enabled: str = Form(""), smtp_host: str 
         "events": ["replication_failure", "driver_unhealthy", "failover"],
     }
     store.update(lambda s: s["setup"].update({"alerts": cfg}))
-    return await setup_page(request, notice="Alert settings saved.")
+    return setup_page(request, notice="Alert settings saved.")
 
 
 @router.post("/setup/reset", response_class=HTMLResponse)
-async def reset_console(request: Request, scope: str = Form("inventory"),
+def reset_console(request: Request, scope: str = Form("inventory"),
                         confirm: str = Form("")):
     """Wipe what the console knows, so a new site starts from nothing.
 
@@ -226,7 +226,7 @@ async def reset_console(request: Request, scope: str = Form("inventory"),
 
 
 @router.post("/setup/alerts/test", response_class=HTMLResponse)
-async def test_alert(request: Request):
+def test_alert(request: Request):
     cfg = store.load()["setup"]["alerts"]
     results = []
     if cfg.get("smtp_host") and cfg.get("mail_to"):

@@ -52,5 +52,5 @@ async def job_console(request: Request, job_id: str):
 
 
 @router.get("/inventory")
-async def inventory_json(force: bool = False):
+def inventory_json(force: bool = False):
     return inventory.snapshot(force=force)

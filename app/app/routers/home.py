@@ -11,7 +11,7 @@ from ..templating import templates
 router = APIRouter()
 
 
-async def dashboard(request: Request, force: bool = False) -> HTMLResponse:
+def dashboard(request: Request, force: bool = False) -> HTMLResponse:
     data = inventory.snapshot(force=force)
     warnings = []
     if not data["tools"]["repctl"]["found"]:
@@ -36,7 +36,7 @@ async def dashboard(request: Request, force: bool = False) -> HTMLResponse:
 
 
 @router.get("/partials/dashboard", response_class=HTMLResponse)
-async def dashboard_partial(request: Request):
+def dashboard_partial(request: Request):
     data = inventory.snapshot(force=True)
     return templates.TemplateResponse(request, "partials/dashboard_body.html",
                                       {"data": data, "page": "home"})

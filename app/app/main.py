@@ -87,12 +87,12 @@ def _login_page(request: Request, error: str = "", next: str = "/", chosen: str 
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, first_run: int = 0, next: str = "/", error: str = ""):
+def login_form(request: Request, first_run: int = 0, next: str = "/", error: str = ""):
     return _login_page(request, error=error, next=next)
 
 
 @app.post("/login")
-async def login_submit(request: Request, password: str = Form(""), confirm: str = Form(""),
+def login_submit(request: Request, password: str = Form(""), confirm: str = Form(""),
                        username: str = Form(""), source: str = Form("local"),
                        next: str = Form("/")):
     state = store.load()
@@ -154,7 +154,7 @@ async def login_submit(request: Request, password: str = Form(""), confirm: str 
 
 
 @app.get("/auth/oidc/login")
-async def oidc_redirect(request: Request, next: str = "/"):
+def oidc_redirect(request: Request, next: str = "/"):
     """Send the browser to the provider's own sign-in page."""
     cfg = store.load()["setup"]["oidc"]
     if not cfg.get("enabled"):
@@ -169,7 +169,7 @@ async def oidc_redirect(request: Request, next: str = "/"):
 
 
 @app.get("/auth/oidc/callback", name="oidc_callback")
-async def oidc_callback(request: Request, code: str = "", state: str = "", error: str = "",
+def oidc_callback(request: Request, code: str = "", state: str = "", error: str = "",
                         error_description: str = ""):
     if error:
         message = error_description or error
@@ -196,7 +196,7 @@ async def oidc_callback(request: Request, code: str = "", state: str = "", error
 
 
 @app.get("/logout")
-async def logout():
+def logout():
     response = RedirectResponse("/login", status_code=303)
     security.clear_session_cookie(response)
     return response
@@ -209,6 +209,6 @@ app.include_router(api.router)
 
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+def home(request: Request):
     from .routers.home import dashboard
-    return await dashboard(request)
+    return dashboard(request)

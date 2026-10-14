@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 
 from .. import store
@@ -14,6 +15,11 @@ from ..services.jobs import Job, start
 from ..templating import templates
 
 router = APIRouter()
+
+
+async def _page_async(request: Request, **extra):
+    """Render the page from a worker thread; building it probes clusters and arrays."""
+    return await run_in_threadpool(lambda: _page(request, **extra))
 
 
 def _page(request: Request, **extra):
@@ -84,13 +90,13 @@ def _next_step(ctx: dict) -> dict:
 
 
 @router.get("/install", response_class=HTMLResponse)
-async def install_page(request: Request):
+def install_page(request: Request):
     return _page(request)
 
 
 # --- tools ---------------------------------------------------------------------
 @router.get("/install/repctl/releases", response_class=HTMLResponse)
-async def repctl_releases(request: Request):
+def repctl_releases(request: Request):
     try:
         releases = tools.repctl_releases()
         error = ""
@@ -125,7 +131,7 @@ async def install_repctl(request: Request, source: str = Form("download"),
 
 
 @router.get("/install/repctl/clusters", response_class=HTMLResponse)
-async def repctl_clusters(request: Request):
+def repctl_clusters(request: Request):
     state = store.load()
     return templates.TemplateResponse(request, "partials/repctl_clusters.html", {
         "repctl": replication.list_clusters(),
@@ -134,7 +140,7 @@ async def repctl_clusters(request: Request):
 
 
 @router.post("/install/repctl/register", response_class=HTMLResponse)
-async def repctl_register(request: Request):
+def repctl_register(request: Request):
     """repctl cluster add for every cluster the console knows, on its own."""
     clusters = list(store.load()["clusters"].values())
     if len(clusters) < 1:
@@ -167,30 +173,35 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
                       kubeconfig_file: UploadFile | None = File(None)):
     cid = cluster_id.strip().lower().replace(" ", "-")
     if not cid:
-        return _page(request, error="give the cluster an id")
+        return await _page_async(request, error="give the cluster an id")
 
-    try:
+    def connect():
+        """Reaching a cluster can take a while, so it happens off the event loop."""
         if connect_via == "login":
             if not api_server or not username or not password:
-                return _page(request, error="the login route needs an API address, a user and a password")
+                raise k8s.ClusterError("this route needs an API address, a user and a password")
             path = k8s.login_kubeconfig(api_server, username.strip(), password, cid,
                                         insecure=(insecure == "on"))
         else:
-            content = None
-            if kubeconfig_file and kubeconfig_file.filename:
-                content = (await kubeconfig_file.read()).decode("utf-8", errors="replace")
-            elif kubeconfig_path_in.strip():
+            content = uploaded
+            if not content and kubeconfig_path_in.strip():
                 try:
                     content = open(kubeconfig_path_in.strip()).read()
                 except OSError as exc:
-                    return _page(request, error=f"cannot read {kubeconfig_path_in}: {exc}")
+                    raise k8s.ClusterError(f"cannot read {kubeconfig_path_in}: {exc}") from exc
             if not content:
-                return _page(request, error="choose a kubeconfig file, give a path, "
-                                            "or switch to the username and password route")
+                raise k8s.ClusterError("choose a kubeconfig file, give a path, or switch to "
+                                       "the username and password route")
             path = k8s.save_kubeconfig(cid, content)
-        info = k8s.probe(path)
+        return path, k8s.probe(path)
+
+    uploaded = None
+    if kubeconfig_file and kubeconfig_file.filename:
+        uploaded = (await kubeconfig_file.read()).decode("utf-8", errors="replace")
+    try:
+        path, info = await run_in_threadpool(connect)
     except k8s.ClusterError as exc:
-        return _page(request, error=f"{cid}: {exc}")
+        return await _page_async(request, error=f"{cid}: {exc}")
 
     record = {
         "id": cid, "role": role, "namespace": namespace.strip() or DRIVER_NAMESPACE_DEFAULT,
@@ -205,19 +216,19 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
     inventory.invalidate()
     who = info.get("user") or "the supplied identity"
     admin = "with cluster-admin" if info.get("cluster_admin") else "WITHOUT cluster-admin"
-    return _page(request, notice=f"Cluster {cid} added: {info.get('server','')}, connected as "
+    return await _page_async(request, notice=f"Cluster {cid} added: {info.get('server','')}, connected as "
                                  f"{who} {admin}.")
 
 
 @router.post("/install/clusters/{cid}/delete", response_class=HTMLResponse)
-async def delete_cluster(request: Request, cid: str):
+def delete_cluster(request: Request, cid: str):
     store.update(lambda s: s["clusters"].pop(cid, None))
     inventory.invalidate()
     return _page(request, notice=f"Cluster {cid} removed from the console (nothing was uninstalled).")
 
 
 @router.get("/install/clusters/{cid}/rbac", response_class=HTMLResponse)
-async def cluster_rbac(request: Request, cid: str):
+def cluster_rbac(request: Request, cid: str):
     state = store.load()
     cluster = state["clusters"].get(cid)
     if not cluster:
@@ -236,7 +247,7 @@ async def cluster_rbac(request: Request, cid: str):
 
 
 @router.post("/install/clusters/{cid}/serviceaccount", response_class=HTMLResponse)
-async def make_service_account(request: Request, cid: str,
+def make_service_account(request: Request, cid: str,
                                sa_name: str = Form(k8s.SA_NAME),
                                sa_namespace: str = Form(k8s.SA_NAMESPACE),
                                role: str = Form(k8s.SA_CLUSTER_ROLE)):
@@ -270,7 +281,7 @@ async def make_service_account(request: Request, cid: str,
 
 # --- arrays --------------------------------------------------------------------
 @router.post("/install/arrays", response_class=HTMLResponse)
-async def add_array(request: Request, endpoint: str = Form(...), username: str = Form(...),
+def add_array(request: Request, endpoint: str = Form(...), username: str = Form(...),
                     password: str = Form(...), port: int = Form(8080),
                     isi_path: str = Form("/ifs/data/csi"), access_zone: str = Form("System"),
                     skip_cert_validation: str = Form("on"), is_default: str = Form(""),
@@ -313,14 +324,14 @@ async def add_array(request: Request, endpoint: str = Form(...), username: str =
 
 
 @router.post("/install/arrays/{aid}/delete", response_class=HTMLResponse)
-async def delete_array(request: Request, aid: str):
+def delete_array(request: Request, aid: str):
     store.update(lambda s: s["arrays"].pop(aid, None))
     inventory.invalidate()
     return _page(request, notice=f"Array {aid} removed from the console.")
 
 
 @router.get("/install/driver/status", response_class=HTMLResponse)
-async def driver_status_partial(request: Request, cluster_id: str = ""):
+def driver_status_partial(request: Request, cluster_id: str = ""):
     """What is running on every registered cluster, shown above the install form."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -424,7 +435,7 @@ async def install_driver(request: Request):
 
 
 @router.post("/install/driver/uninstall", response_class=HTMLResponse)
-async def uninstall_driver(request: Request, cluster_id: str = Form(...)):
+def uninstall_driver(request: Request, cluster_id: str = Form(...)):
     state = store.load()
     cluster = state["clusters"].get(cluster_id)
     if not cluster:
@@ -503,7 +514,7 @@ async def create_storage_class(request: Request):
 
 # --- replication wiring ---------------------------------------------------------
 @router.get("/install/replication/preflight", response_class=HTMLResponse)
-async def replication_preflight(request: Request, source_cluster: str = "", target_cluster: str = ""):
+def replication_preflight(request: Request, source_cluster: str = "", target_cluster: str = ""):
     state = store.load()
     chosen = [state["clusters"][c] for c in (source_cluster, target_cluster)
               if c and c in state["clusters"]]
@@ -521,7 +532,7 @@ async def replication_preflight(request: Request, source_cluster: str = "", targ
 
 
 @router.post("/install/replication/setup", response_class=HTMLResponse)
-async def replication_setup(request: Request, source_cluster: str = Form(...),
+def replication_setup(request: Request, source_cluster: str = Form(...),
                             target_cluster: str = Form(...), use_sa: str = Form("on")):
     state = store.load()
     src = state["clusters"].get(source_cluster)

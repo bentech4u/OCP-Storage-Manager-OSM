@@ -103,7 +103,7 @@ def _groups() -> list[dict]:
 
 
 @router.get("/operations", response_class=HTMLResponse)
-async def operations_page(request: Request, job: str = ""):
+def operations_page(request: Request, job: str = ""):
     state = store.load()
     data = inventory.snapshot()
     return templates.TemplateResponse(request, "operations.html", {
@@ -118,7 +118,7 @@ async def operations_page(request: Request, job: str = ""):
 
 
 @router.get("/partials/groups", response_class=HTMLResponse)
-async def groups_partial(request: Request):
+def groups_partial(request: Request):
     state = store.load()
     return templates.TemplateResponse(request, "partials/groups.html", {
         "groups": _groups(), "clusters": list(state["clusters"].values()),
@@ -127,7 +127,7 @@ async def groups_partial(request: Request):
 
 
 @router.get("/partials/synciq", response_class=HTMLResponse)
-async def synciq_partial(request: Request):
+def synciq_partial(request: Request):
     rows = []
     for array in store.load()["arrays"].values():
         try:
@@ -143,7 +143,7 @@ async def synciq_partial(request: Request):
 
 
 @router.get("/partials/action-form", response_class=HTMLResponse)
-async def action_form(request: Request, rg: str = "", cluster: str = "", action: str = "failover",
+def action_form(request: Request, rg: str = "", cluster: str = "", action: str = "failover",
                       target: str = ""):
     """The confirmation form, with the cluster picker and the command always in step."""
     state = store.load()
@@ -176,7 +176,7 @@ async def action_form(request: Request, rg: str = "", cluster: str = "", action:
 
 
 @router.post("/operations/action", response_class=HTMLResponse)
-async def run_action(request: Request, rg: str = Form(...), action: str = Form(...),
+def run_action(request: Request, rg: str = Form(...), action: str = Form(...),
                      cluster: str = Form(""), target: str = Form(""),
                      unplanned: str = Form(""), discard: str = Form("")):
     if action not in replication.ACTIONS:
@@ -202,7 +202,7 @@ async def run_action(request: Request, rg: str = Form(...), action: str = Form(.
 
 
 @router.get("/operations/jobs/{job_id}", response_class=HTMLResponse)
-async def show_job(request: Request, job_id: str):
+def show_job(request: Request, job_id: str):
     job = get_job(job_id)
     if not job:
         return HTMLResponse('<div class="empty">That job is no longer in memory.</div>')
