@@ -41,6 +41,10 @@
       </div>
       {% endfor %}
     </div>
+    <details class="fold" {% if not tools_ready %}open{% endif %}>
+      <summary><span class="chev">▸</span> Install or replace repctl
+        <span class="muted small">{{ "repctl drives every replication action and is not here yet"
+          if not tools_ready else "every tool is ready; open this to change the version" }}</span></summary>
     <form hx-post="/install/repctl" hx-target="#output" hx-encoding="multipart/form-data" hx-swap="innerHTML">
       <div class="choices" style="margin-bottom:.9rem">
         <label class="choice"><input type="radio" name="source" value="download" checked>
@@ -70,6 +74,7 @@
       <input type="hidden" name="version" value="v1.15.0">
       <button class="btn primary">Install repctl</button>
     </form>
+    </details>
     <div hx-get="/install/repctl/clusters" hx-trigger="load, refresh"
          data-refresh-on-job="1"></div>
   </div>

@@ -44,6 +44,8 @@ def _page(request: Request, **extra):
         "repctl_default": tools.default_repctl_choice(),
         "namespace_default": DRIVER_NAMESPACE_DEFAULT,
         "driver_rows": rows,
+        # the install form folds away once every tool is present
+        "tools_ready": all(t["found"] for t in data["tools"].values()),
         # the form folds away once a driver is actually running somewhere
         "driver_installed": any(r["status"].get("controller_ready") for r in rows),
         # the step chips at the top follow what is really there, not what was clicked
