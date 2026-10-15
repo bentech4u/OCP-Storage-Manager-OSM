@@ -594,6 +594,27 @@ def cmd_admin_restore(args) -> None:
 
 
 def cmd_audit(args) -> None:
+    if args.sub == "archive":
+        result = audit.verify()
+        if result["ok"]:
+            print(f"the current record is intact: {result['checked']} entries")
+        else:
+            print(f"the current record does not verify: {result['problem']}")
+        if not args.yes:
+            answer = input("set it aside and start a new chain? type yes: ").strip().lower()
+            if answer != "yes":
+                print("nothing changed")
+                return
+        done = audit.archive(reason=args.reason, actor=os.environ.get("SUDO_USER") or "osmctl",
+                             via="shell")
+        for item in done["moved"]:
+            print(f"  archived {item['file']}  {item['entries']} entries  "
+                  f"sha256 {item['sha256']}")
+        print(done["detail"])
+        fresh = audit.verify()
+        print(f"the new chain verifies: {fresh['ok']} "
+              f"({fresh['checked']} entr{'y' if fresh['checked'] == 1 else 'ies'})")
+        return
     if args.sub == "verify":
         result = audit.verify()
         if result["ok"]:
@@ -962,6 +983,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     au = sub.add_parser("audit", help="who did what")
     ausub = au.add_subparsers(dest="sub", required=True)
+    ar = ausub.add_parser("archive", help="set the record aside and start a new chain")
+    ar.add_argument("--reason", default="", help="why, kept as the first entry of the new chain")
+    ar.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    ar.set_defaults(func=cmd_audit)
     for name, helptext in (("list", "read the record"), ("export", "write it out as CSV"),
                            ("verify", "check nothing was altered or removed")):
         sp = ausub.add_parser(name, help=helptext)

@@ -41,8 +41,17 @@
 
 <div class="card pad-0">
   <div class="card-head" style="padding:1rem 1.1rem 0">
-    <h2>{{ rows|length }} entr{{ "y" if rows|length == 1 else "ies" }}</h2>
-    <span class="sub">newest first; each entry carries the hash of the one before it</span>
+    <div><h2>{% if total %}{{ first_row }}&ndash;{{ last_row }} of {{ total }}{% else %}No{% endif %}
+      entr{{ "y" if total == 1 else "ies" }}</h2>
+      <span class="sub">newest first; each entry carries the hash of the one before it</span></div>
+    <form method="get" action="/audit" class="small">
+      {% for k, v in q.items() %}{% if v and k not in ("size", "page") %}
+      <input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+      <label class="muted">Show
+        <select name="size" onchange="this.form.submit()">
+          {% for n in sizes %}<option value="{{ n }}" {% if n == size %}selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select> per page</label>
+    </form>
   </div>
   <table>
     <thead><tr><th>When</th><th>Who</th><th>What</th><th>Where</th><th>Outcome</th><th>Detail</th></tr></thead>
@@ -67,5 +76,33 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if pages > 1 %}
+  <div class="card-head" style="padding:.7rem 1.1rem">
+    <span class="small muted">page {{ page_no }} of {{ pages }}</span>
+    <div class="btn-row" style="margin:0">
+      <a class="btn sm {{ 'disabled' if page_no <= 1 }}"
+         href="/audit?page={{ page_no - 1 }}{% if keep %}&{{ keep }}{% endif %}">&larr; Previous</a>
+      <a class="btn sm {{ 'disabled' if page_no >= pages }}"
+         href="/audit?page={{ page_no + 1 }}{% if keep %}&{{ keep }}{% endif %}">Next &rarr;</a>
+    </div>
+  </div>
+  {% endif %}
 </div>
+
+{% if archived %}
+<div class="card" style="margin-top:1rem">
+  <div class="card-head"><div><h2>Archived records</h2>
+    <div class="sub">set aside when a new chain was started; still on disk, not part of the
+      checks above</div></div></div>
+  <table>
+    <tbody>
+      {% for a in archived %}
+      <tr><td class="small mono">{{ a.file }}</td>
+        <td class="small muted">{{ a.entries }} entries</td>
+        <td class="small muted mono truncate" title="{{ a.path }}">{{ a.path }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}

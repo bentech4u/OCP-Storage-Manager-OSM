@@ -23,6 +23,7 @@ AUDIT_DIR = DATA_DIR / "audit"
 GENESIS = "0" * 64
 _lock = threading.RLock()
 CHAIN_LOCK = AUDIT_DIR / ".chain.lock"
+ARCHIVE_DIR = AUDIT_DIR / "archive"
 
 
 @contextmanager
@@ -123,10 +124,59 @@ def record(action: str, actor: str = "", via: str = "", target: str = "",
         return {}
 
 
+def archive(reason: str = "", actor: str = "", via: str = "") -> dict:
+    """Set the current record aside and begin a new chain.
+
+    Nothing is deleted: the files move into audit/archive and stay readable. The
+    first entry of the new chain names each one with its sha256, so what was set
+    aside is still accounted for and cannot be swapped later without showing.
+    """
+    ensure_dirs()
+    moved = []
+    with _lock, _chain_lock():
+        files = _files()
+        if not files:
+            return {"moved": [], "detail": "there was nothing to archive"}
+        ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(ARCHIVE_DIR, 0o700)
+        except PermissionError:
+            pass
+        match_owner(ARCHIVE_DIR)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        for path in files:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            lines = sum(1 for line in path.read_text().splitlines() if line.strip())
+            target = ARCHIVE_DIR / f"{path.stem}-archived-{stamp}.jsonl"
+            path.replace(target)
+            match_owner(target)
+            moved.append({"file": target.name, "entries": lines, "sha256": digest})
+    record("audit.archive", actor=actor or "system", via=via, outcome="ok",
+           detail=(reason or "the record was archived and a new chain started")[:500],
+           archived=", ".join(f"{m['file']} ({m['entries']} entries, sha256 {m['sha256'][:16]})"
+                              for m in moved))
+    return {"moved": moved, "detail": f"{len(moved)} file(s) moved to {ARCHIVE_DIR}"}
+
+
+def archived() -> list[dict]:
+    """What has been set aside, for the page to show alongside the live record."""
+    if not ARCHIVE_DIR.exists():
+        return []
+    out = []
+    for path in sorted(ARCHIVE_DIR.glob("*.jsonl"), reverse=True):
+        try:
+            lines = sum(1 for line in path.read_text().splitlines() if line.strip())
+        except OSError:
+            lines = 0
+        out.append({"file": path.name, "entries": lines, "path": str(path)})
+    return out
+
+
 def entries(limit: int = 200, actor: str = "", action: str = "", target: str = "",
-            since: str = "", until: str = "", text: str = "") -> list[dict]:
-    """Most recent first, filtered."""
+            since: str = "", until: str = "", text: str = "", offset: int = 0) -> list[dict]:
+    """Most recent first, filtered, starting `offset` entries in."""
     found: list[dict] = []
+    skipped = 0
     for path in reversed(_files()):
         try:
             lines = path.read_text().splitlines()
@@ -153,10 +203,45 @@ def entries(limit: int = 200, actor: str = "", action: str = "", target: str = "
                 blob = json.dumps(entry).lower()
                 if text.lower() not in blob:
                     continue
+            if skipped < offset:
+                skipped += 1
+                continue
             found.append(entry)
             if len(found) >= limit:
                 return found
     return found
+
+
+def count(actor: str = "", action: str = "", target: str = "", since: str = "",
+          until: str = "", text: str = "") -> int:
+    """How many entries match, so a page can say which part of them it is showing."""
+    total = 0
+    for path in _files():
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if actor and actor.lower() not in entry.get("actor", "").lower():
+                continue
+            if action and action != entry.get("action"):
+                continue
+            if target and target.lower() not in entry.get("target", "").lower():
+                continue
+            if since and entry.get("at", "") < since:
+                continue
+            if until and entry.get("at", "") > until:
+                continue
+            if text and text.lower() not in json.dumps(entry).lower():
+                continue
+            total += 1
+    return total
 
 
 def actions() -> list[str]:

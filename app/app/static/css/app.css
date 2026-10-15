@@ -137,7 +137,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .btn:hover { background: color-mix(in srgb, var(--brand) 12%, var(--bg-elev-2)); text-decoration: none; }
 .btn:active { transform: translateY(1px); }
-.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.btn[disabled], .btn.disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
 .btn.primary { background: linear-gradient(135deg, var(--brand), #2563eb); border-color: transparent; color: #fff; }
 .btn.primary:hover { filter: brightness(1.07); }
 .btn.danger { background: color-mix(in srgb, var(--bad) 16%, var(--bg-elev-2)); border-color: color-mix(in srgb, var(--bad) 40%, transparent); color: #fff; }
