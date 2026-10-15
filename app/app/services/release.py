@@ -26,6 +26,7 @@ from pathlib import Path
 
 from ..config import DATA_DIR, ROOT, inherit_owner, match_owner
 
+SERVICE = os.environ.get("OSM_SERVICE", "ocpstorage-console")
 MANIFEST = "osm-bundle.json"
 VERSION_FILE = Path("app") / "VERSION"
 BACKUP_DIR = DATA_DIR / "backups"
@@ -210,13 +211,12 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
               "_before": integration_before}
 
     if restart:
-        from . import maintenance
-        maintenance.service("restart")
+        _restart()
         result["restarted"] = True
         result["healthy"] = _healthy(health_timeout)
         if not result["healthy"]:
             restore(backup)
-            maintenance.service("restart")
+            _restart()
             result["rolled_back"] = True
             result["healthy_after_rollback"] = _healthy(health_timeout)
             return result
@@ -224,41 +224,85 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
     return result
 
 
-def integration_check(before: dict | None = None) -> dict:
-    """Confirm the new code still reads everything the old one was using.
+PROBE = """
+import json, sys
+sys.path.insert(0, %r)
+out = {"clusters": 0, "arrays": 0, "repctl": 0, "reachable_clusters": 0,
+       "reachable_arrays": 0, "problems": []}
+try:
+    from app import store
+    state = store.load()
+    out["clusters"] = len(state["clusters"])
+    out["arrays"] = len(state["arrays"])
+except Exception as exc:
+    out["problems"].append("the state file could not be read: %%s" %% exc)
+    print(json.dumps(out)); raise SystemExit(0)
+try:
+    from app.services import replication
+    out["repctl"] = len(replication.list_clusters().get("rows", []))
+except Exception as exc:
+    out["problems"].append("repctl: %%s" %% exc)
+try:
+    from app.services import inventory
+    data = inventory.snapshot(force=True)
+    out["reachable_clusters"] = sum(1 for c in data["clusters"] if c.get("reachable"))
+    out["reachable_arrays"] = sum(1 for a in data["arrays"] if a.get("reachable"))
+except Exception as exc:
+    out["problems"].append("inventory: %%s" %% exc)
+print(json.dumps(out))
+"""
 
-    An update writes no state, so these numbers cannot change by themselves. If they
-    do, the new code cannot read what is there, which is worth knowing immediately
-    rather than at the next failover.
+
+def integration_check(before: dict | None = None) -> dict:
+    """Confirm the installed code still reads everything the old one was using.
+
+    This runs in a new process on purpose. The updater has the previous version of
+    every module in memory, so asking in here would report on code that is no longer
+    on disk, and would miss a tree that cannot be imported at all.
     """
-    from .. import store
-    out: dict = {"clusters": 0, "arrays": 0, "repctl": 0, "reachable_clusters": 0,
-                 "reachable_arrays": 0, "problems": []}
+    import sys
+    out = {"clusters": 0, "arrays": 0, "repctl": 0, "reachable_clusters": 0,
+           "reachable_arrays": 0, "problems": []}
     try:
-        state = store.load()
-        out["clusters"] = len(state["clusters"])
-        out["arrays"] = len(state["arrays"])
+        proc = subprocess.run([sys.executable, "-c", PROBE % str(ROOT / "app")],
+                              capture_output=True, text=True, timeout=180,
+                              cwd=str(ROOT / "app"))
     except Exception as exc:                               # noqa: BLE001
-        out["problems"].append(f"the state file could not be read: {exc}")
+        out["problems"].append(f"could not run the check: {exc}")
         return out
     try:
-        from . import replication
-        out["repctl"] = len(replication.list_clusters().get("rows", []))
-    except Exception as exc:                               # noqa: BLE001
-        out["problems"].append(f"repctl: {exc}")
-    try:
-        from . import inventory
-        data = inventory.snapshot(force=True)
-        out["reachable_clusters"] = sum(1 for c in data["clusters"] if c.get("reachable"))
-        out["reachable_arrays"] = sum(1 for a in data["arrays"] if a.get("reachable"))
-    except Exception as exc:                               # noqa: BLE001
-        out["problems"].append(f"inventory: {exc}")
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        out["problems"].append("the installed code did not load: "
+                               + (proc.stderr or proc.stdout).strip()[-300:])
+        return out
     if before:
         for key in ("clusters", "arrays", "repctl"):
             if before.get(key) != out[key]:
                 out["problems"].append(
                     f"{key}: {before.get(key)} before the update, {out[key]} after")
     return out
+
+
+def _restart() -> None:
+    subprocess.run(["systemctl", "restart", SERVICE], capture_output=True, text=True,
+                   timeout=120)
+
+
+def _endpoint() -> tuple[int, bool]:
+    """Port and scheme straight from the unit, without importing the application."""
+    try:
+        proc = subprocess.run(["systemctl", "show", SERVICE, "-p", "Environment", "--value"],
+                              capture_output=True, text=True, timeout=30)
+        env = dict(item.split("=", 1) for item in proc.stdout.split() if "=" in item)
+    except Exception:                                      # noqa: BLE001
+        env = {}
+    port = env.get("OSM_PORT") or os.environ.get("OSM_PORT") or "8800"
+    tls = bool(env.get("OSM_TLS_CERT") or os.environ.get("OSM_TLS_CERT"))
+    try:
+        return int(port), tls
+    except ValueError:
+        return 8800, tls
 
 
 def _write(target: Path, payload: bytes) -> None:
@@ -321,8 +365,7 @@ def _healthy(timeout: int) -> bool:
     to serve is exactly the state this is meant to catch.
     """
     import ssl
-    from . import maintenance
-    port, tls = maintenance.console_endpoint()
+    port, tls = _endpoint()
     scheme = "https" if tls else "http"
     url = f"{scheme}://127.0.0.1:{port}/healthz"
     context = None
