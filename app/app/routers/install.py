@@ -332,6 +332,22 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
     return _page(request, notice=notice)
 
 
+@router.get("/install/arrays/{aid}/nodes", response_class=HTMLResponse)
+def array_nodes(request: Request, aid: str):
+    """Try the API on every node behind this array's address."""
+    array = store.load()["arrays"].get(aid)
+    if not array:
+        return HTMLResponse('<div class="banner bad">unknown array</div>')
+    from ..services.arrays import node_check, resolve_all
+    addresses = resolve_all(array["endpoint"])
+    results = node_check(array["endpoint"], int(array.get("port", 8080)), array["username"],
+                         array["password"], int(array.get("auth_type", 1)))
+    return templates.TemplateResponse(request, "partials/array_nodes.html", {
+        "array": array, "results": results, "addresses": addresses,
+        "failing": [r for r in results if not r["ok"]],
+    })
+
+
 @router.post("/install/arrays/{aid}/delete", response_class=HTMLResponse)
 def delete_array(request: Request, aid: str):
     audit.record("array.remove", actor=getattr(request.state, "user", ""),

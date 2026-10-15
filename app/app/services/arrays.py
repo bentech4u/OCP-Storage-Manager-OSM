@@ -262,6 +262,52 @@ class OneFS:
         } for r in data.get("reports", [])]
 
 
+def resolve_all(endpoint: str) -> list[str]:
+    """Every address a name answers with, because a SmartConnect name fronts many nodes."""
+    import socket
+    host = endpoint.replace("https://", "").replace("http://", "").split(":")[0].strip("/")
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return []
+    return sorted({info[4][0] for info in infos})
+
+
+def node_check(endpoint: str, port: int, user: str, password: str, auth_type: int = 1,
+               timeout: int = 10) -> list[dict]:
+    """Try the API on each node behind the address, one at a time.
+
+    A name that balances across nodes hides a node that answers differently: basic
+    authentication switched off on one of them, a service not restarted, a password
+    not replicated. Asking each address separately shows which node disagrees.
+    """
+    results = []
+    for address in resolve_all(endpoint) or [endpoint]:
+        entry = {"address": address, "ok": False, "status": 0, "detail": ""}
+        client = OneFS(address, port, user, password, auth_type=auth_type, timeout=timeout)
+        try:
+            if client.mode == "basic":
+                status, data = client.get("/platform/3/cluster/config")
+            else:
+                client.login()
+                status, data = client.get("/platform/3/cluster/config")
+            entry["status"] = status
+            entry["ok"] = status == 200
+            if status == 200:
+                entry["detail"] = f"{data.get('name', '')}, OneFS " \
+                                  f"{(data.get('onefs_version') or {}).get('release', '')}"
+                entry["node"] = (data.get("local_serial") or data.get("local_devid") or "")
+            elif status == 401:
+                entry["detail"] = ("rejected the credentials; on this node basic authentication "
+                                   "may be off, or the account differs")
+            else:
+                entry["detail"] = f"HTTP {status}"
+        except ArrayError as exc:
+            entry["detail"] = str(exc)[:160]
+        results.append(entry)
+    return results
+
+
 def _json(payload: bytes) -> Any:
     try:
         return json.loads(payload.decode() or "{}")

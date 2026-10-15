@@ -189,6 +189,22 @@ def cmd_array_add(args) -> None:
         print("missing privileges: " + ", ".join(info["missing_privileges"]))
 
 
+def cmd_array_nodes(args) -> None:
+    from app.services.arrays import node_check, resolve_all
+    array = store.load()["arrays"].get(args.id) or die(f"unknown array {args.id}")
+    addresses = resolve_all(array["endpoint"])
+    print(f"{array['name']} at {array['endpoint']} resolves to {len(addresses)} address(es)")
+    rows = node_check(array["endpoint"], int(array.get("port", 8080)), array["username"],
+                      array["password"], int(array.get("auth_type", 1)))
+    table([{"address": r["address"], "result": "ok" if r["ok"] else (r["status"] or "no answer"),
+            "detail": r["detail"][:70]} for r in rows], ["address", "result", "detail"])
+    bad = [r for r in rows if not r["ok"]]
+    if bad:
+        print(f"\n{len(bad)} of {len(rows)} nodes refused. With a balanced name this shows up as "
+              "an array that is reachable one minute and not the next.")
+    raise SystemExit(1 if bad else 0)
+
+
 def cmd_array_list(args) -> None:
     rows = [{"id": a["id"], "name": a["name"], "endpoint": a["endpoint"],
              "auth": a.get("auth_mode", "session"),
@@ -680,6 +696,9 @@ def build_parser() -> argparse.ArgumentParser:
     aa.add_argument("--verify-tls", action="store_true")
     aa.set_defaults(func=cmd_array_add)
     ar.add_parser("list").set_defaults(func=cmd_array_list)
+    an = ar.add_parser("nodes", help="try the API on every node behind the address")
+    an.add_argument("--id", required=True)
+    an.set_defaults(func=cmd_array_nodes)
 
     d = sub.add_parser("driver", help="the CSI driver").add_subparsers(dest="sub", required=True)
     di = d.add_parser("install")

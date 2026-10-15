@@ -1,0 +1,35 @@
+<div class="card">
+  <div class="card-head">
+    <div><h3>{{ array.name }}, node by node</h3>
+      <div class="sub">{{ array.endpoint }} answers with {{ addresses|length }} address(es);
+        each was asked separately with {{ "basic" if array.auth_type == 0 else "session" }}
+        authentication</div></div>
+    {% if failing %}<span class="pill bad">{{ failing|length }} of {{ results|length }} failing</span>
+    {% else %}<span class="pill ok">all {{ results|length }} answering</span>{% endif %}
+  </div>
+  {% if failing %}
+  <div class="banner warn"><span>⚠</span>
+    <div>A name that balances across nodes hides this: calls succeed or fail depending on which
+      node answers, which is why the console flips between reachable and not.
+      {% if failing|length < results|length %}
+      On the nodes that refuse, check that basic authentication is enabled and the web service was
+      restarted there:
+      <div class="mono small" style="margin-top:.3rem">isi_for_array -s 'isi_gconfig -t web-config | grep auth_basic'</div>
+      <div class="mono small">isi services -a apache2 disable &amp;&amp; isi services -a apache2 enable</div>
+      {% endif %}
+    </div></div>
+  {% endif %}
+  <table>
+    <thead><tr><th>Address</th><th>Result</th><th>What it said</th></tr></thead>
+    <tbody>
+      {% for r in results %}
+      <tr>
+        <td class="mono small">{{ r.address }}</td>
+        <td>{% if r.ok %}<span class="pill ok">ok</span>
+            {% else %}<span class="pill bad">{{ r.status or "no answer" }}</span>{% endif %}</td>
+        <td class="small muted">{{ r.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

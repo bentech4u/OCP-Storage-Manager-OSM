@@ -187,8 +187,11 @@
             {% if not a.path_ok %}<span class="pill warn">missing</span>{% endif %}</td>
           <td class="small mono truncate" title="{{ a.replication_certificate_id }}">
             {{ a.replication_certificate_id[:16] ~ "..." if a.replication_certificate_id else "none" }}</td>
-          <td class="right"><button class="btn sm danger" hx-post="/install/arrays/{{ a.id }}/delete"
-            hx-target="body" data-confirm="Remove {{ a.name }}?">Remove</button></td>
+          <td class="right nowrap">
+            <button class="btn sm" hx-get="/install/arrays/{{ a.id }}/nodes" hx-target="#output"
+              title="Try the API on every node behind this address">Test nodes</button>
+            <button class="btn sm danger" hx-post="/install/arrays/{{ a.id }}/delete"
+              hx-target="body" data-confirm="Remove {{ a.name }}?">Remove</button></td>
         </tr>
       {% else %}
         <tr><td colspan="7" class="empty">No arrays yet.</td></tr>
