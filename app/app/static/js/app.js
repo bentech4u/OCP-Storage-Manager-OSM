@@ -38,6 +38,14 @@
     src.onerror = function () { src.close(); };
   };
 
+  // A form that replaces the whole page leaves the view where it was, but the page
+  // underneath has changed: the section just finished folds away, the document gets
+  // shorter, and the browser clamps the old offset to the new bottom. Go back to the
+  // top, which is where the result of what was just done is written.
+  document.body.addEventListener("htmx:afterSwap", function (evt) {
+    if (evt.detail.target === document.body) window.scrollTo(0, 0);
+  });
+
   // Any element with data-confirm asks first.
   document.body.addEventListener("htmx:confirm", function (evt) {
     const q = evt.detail.elt.getAttribute("data-confirm");
