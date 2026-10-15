@@ -24,7 +24,24 @@ import time
 import urllib.request
 from pathlib import Path
 
-from ..config import DATA_DIR, ROOT, inherit_owner, match_owner
+# This module is lifted out of a bundle and run against an older installation to
+# perform the first update, so it must not need anything that update adds. Whatever
+# the config of the day does not have, it brings itself.
+from ..config import DATA_DIR, ROOT, match_owner
+
+try:
+    from ..config import inherit_owner
+except ImportError:                                  # an installation older than this
+    def inherit_owner(path) -> None:                 # type: ignore[misc]
+        """Give a new path the owner of the directory above it."""
+        if os.geteuid() != 0:
+            return
+        try:
+            parent = Path(path).parent.stat()
+            if parent.st_uid:
+                os.chown(path, parent.st_uid, parent.st_gid)
+        except OSError:
+            pass
 
 SERVICE = os.environ.get("OSM_SERVICE", "ocpstorage-console")
 MANIFEST = "osm-bundle.json"
