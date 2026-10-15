@@ -297,7 +297,18 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
     try:
         info = client.inspect()
     except ArrayError as exc:
-        return _page(request, error=f"{endpoint}: {exc}")
+        from ..services.arrays import which_auth_works
+        works = which_auth_works(endpoint, port, username, password)
+        hint = ""
+        if int(auth_type) == 1 and works.get("basic"):
+            hint = " Basic authentication does work with these credentials; choose basic instead."
+        elif int(auth_type) == 0 and works.get("session"):
+            hint = (" Session authentication does work with these credentials; choose session "
+                    "instead, or enable basic on the array.")
+        elif not any(works.values()):
+            hint = (" Neither authentication type worked, so the account, the password or its "
+                    "privileges are the problem rather than the setting.")
+        return _page(request, error=f"{endpoint}: {exc}{hint}")
     if create_path == "on" and not client.check_path(isi_path)["exists"]:
         client.create_path(isi_path)
     path_ok = client.check_path(isi_path)["exists"]

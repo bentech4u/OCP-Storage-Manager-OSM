@@ -273,6 +273,22 @@ def resolve_all(endpoint: str) -> list[str]:
     return sorted({info[4][0] for info in infos})
 
 
+def which_auth_works(endpoint: str, port: int, user: str, password: str,
+                     timeout: int = 10) -> dict:
+    """Try both authentication types, so a refusal can say what to use instead."""
+    result = {"basic": False, "session": False}
+    for mode, auth_type in (("basic", 0), ("session", 1)):
+        try:
+            client = OneFS(endpoint, port, user, password, auth_type=auth_type, timeout=timeout)
+            if auth_type == 1:
+                client.login()
+            status, _ = client.get("/platform/3/cluster/config")
+            result[mode] = status == 200
+        except Exception:                                  # noqa: BLE001
+            result[mode] = False
+    return result
+
+
 def node_check(endpoint: str, port: int, user: str, password: str, auth_type: int = 1,
                timeout: int = 10) -> list[dict]:
     """Try the API on each node behind the address, one at a time.
@@ -298,8 +314,17 @@ def node_check(endpoint: str, port: int, user: str, password: str, auth_type: in
                                   f"{(data.get('onefs_version') or {}).get('release', '')}"
                 entry["node"] = (data.get("local_serial") or data.get("local_devid") or "")
             elif status == 401:
-                entry["detail"] = ("rejected the credentials; on this node basic authentication "
-                                   "may be off, or the account differs")
+                other = which_auth_works(address, port, user, password, timeout=timeout)
+                if client.mode == "basic" and other.get("session"):
+                    entry["detail"] = ("basic authentication is refused here, but session "
+                                       "authentication works: either enable basic on the array "
+                                       "or register this array with session")
+                elif client.mode == "session" and other.get("basic"):
+                    entry["detail"] = ("session authentication is refused here, but basic works: "
+                                       "register this array with basic")
+                else:
+                    entry["detail"] = ("the credentials were rejected by this node; check the "
+                                       "account, its password and its privileges")
             else:
                 entry["detail"] = f"HTTP {status}"
         except ArrayError as exc:
