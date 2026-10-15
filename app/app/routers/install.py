@@ -354,6 +354,39 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
     return _page(request, notice=notice)
 
 
+@router.post("/install/arrays/discover", response_class=HTMLResponse)
+def discover_array_paths(request: Request, endpoint: str = Form(""), port: int = Form(8080),
+                         username: str = Form(""), password: str = Form(""),
+                         auth_type: int = Form(1), skip_cert_validation: str = Form("on"),
+                         access_zone: str = Form("System"),
+                         isi_path: str = Form("/ifs/data/csi")):
+    """Read the access zones and the directories under the chosen one, for the form.
+
+    Typing a base path that does not match the array is only found out later, when a
+    claim fails to provision, so the form offers what is actually there.
+    """
+    ctx = {"zones": [], "paths": [], "access_zone": access_zone, "isi_path": isi_path,
+           "zone_path": "/ifs", "error": ""}
+    if not endpoint or not username or not password:
+        ctx["error"] = "Fill in the endpoint, the user and the password first."
+        return templates.TemplateResponse(request, "partials/array_paths.html", ctx)
+    try:
+        client = OneFS(endpoint, port, username, password,
+                       verify=(skip_cert_validation != "on"), auth_type=int(auth_type))
+        zones = client.zones_detail()
+        if not zones:
+            raise ArrayError("this array has no access zones the account can see")
+        ctx["zones"] = zones
+        chosen = next((z for z in zones if z["name"] == access_zone), zones[0])
+        ctx["access_zone"] = chosen["name"]
+        ctx["zone_path"] = chosen["path"]
+        ctx["paths"] = client.directories(chosen["path"])
+    except (ArrayError, Exception) as exc:                    # noqa: BLE001
+        text = str(exc)[:220].strip()
+        ctx["error"] = text if text.endswith(".") else text + "."
+    return templates.TemplateResponse(request, "partials/array_paths.html", ctx)
+
+
 @router.get("/install/arrays/{aid}/nodes", response_class=HTMLResponse)
 def array_nodes(request: Request, aid: str):
     """Try the API on every node behind this array's address."""

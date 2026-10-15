@@ -285,6 +285,44 @@ class OneFS:
             self.cookie = self.csrf = None
         return result
 
+    def zones_detail(self) -> list[dict]:
+        """Access zones with the directory each one is rooted at."""
+        st, data = self.get("/platform/3/zones")
+        if st in (401, 403):
+            raise ArrayError(diagnose_401(self.base, self.user, self.password,
+                                          self.timeout, basic=self.mode == "basic")["detail"])
+        if st != 200:
+            raise ArrayError(f"the array answered {st} when asked for its access zones")
+        out = []
+        for zone in data.get("zones", []):
+            if zone.get("name"):
+                out.append({"name": zone["name"], "path": zone.get("path") or "/ifs"})
+        return out
+
+    def directories(self, path: str, depth: int = 2, limit: int = 150) -> list[str]:
+        """Directories under a path, a couple of levels down.
+
+        This is what the Add array form offers instead of asking someone to type a
+        path and find out at provisioning time that it was wrong. Hidden entries and
+        the snapshot directory are left out: nothing puts volumes there.
+        """
+        found: list[str] = []
+        queue = [(path.rstrip("/") or "/ifs", 0)]
+        while queue and len(found) < limit:
+            current, level = queue.pop(0)
+            st, data = self.get("/namespace" + urllib.parse.quote(current) + "?detail=type")
+            if st != 200:
+                continue
+            for child in data.get("children", []):
+                name = child.get("name", "")
+                if child.get("type") != "container" or name.startswith("."):
+                    continue
+                full = f"{current}/{name}"
+                found.append(full)
+                if level + 1 < depth:
+                    queue.append((full, level + 1))
+        return sorted(set(found))
+
     def check_path(self, isi_path: str) -> dict:
         st, data = self.get("/namespace" + urllib.parse.quote(isi_path) + "?detail=mode,type,owner")
         return {"exists": st == 200, "detail": data if st == 200 else {}, "status": st}
