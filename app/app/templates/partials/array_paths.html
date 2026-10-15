@@ -1,20 +1,28 @@
 {# Access zone and base path, read from the array itself. Replaces the two plain
-   text inputs once someone presses Fetch, and re-renders when the zone changes. #}
+   text inputs once someone presses Fetch, and re-renders when the zone changes.
+
+   autocomplete is off on every box here: these are swapped in just after a password
+   field, which is exactly where a password manager offers to fill. #}
 {% if error %}
+<div class="field" style="grid-column:1 / -1">
+  <div class="banner warn" style="margin:0 0 .6rem">
+    <span>⚠</span><div><strong>Could not read the array.</strong> {{ error }}
+    Type the zone and path instead.</div>
+  </div>
+</div>
 <div class="field">
   <label>Access zone</label>
-  <input type="text" name="access_zone" value="{{ access_zone }}">
-  <div class="hint bad">{{ error }} Type the zone and path instead.</div>
+  <input type="text" name="access_zone" value="{{ access_zone }}" autocomplete="off">
 </div>
 <div class="field">
   <label>Base path</label>
-  <input type="text" name="isi_path" value="{{ isi_path }}">
+  <input type="text" name="isi_path" value="{{ isi_path }}" autocomplete="off">
 </div>
 {% else %}
 <div class="field">
   <label>Access zone</label>
-  <select name="access_zone" hx-post="/install/arrays/discover" hx-target="#array-paths"
-          hx-include="closest form" hx-swap="innerHTML">
+  <select name="access_zone" autocomplete="off" hx-post="/install/arrays/discover"
+          hx-target="#array-paths" hx-include="closest form" hx-swap="innerHTML">
     {% for z in zones %}
     <option value="{{ z.name }}" {% if z.name == access_zone %}selected{% endif %}>
       {{ z.name }} &mdash; {{ z.path }}</option>
@@ -24,7 +32,7 @@
 </div>
 <div class="field">
   <label>Base path</label>
-  <select name="isi_path">
+  <select name="isi_path" autocomplete="off">
     {% for d in paths %}
     <option value="{{ d }}" {% if d == isi_path %}selected{% endif %}>{{ d }}</option>
     {% endfor %}

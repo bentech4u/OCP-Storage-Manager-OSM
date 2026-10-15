@@ -1,6 +1,7 @@
 """Install and Configure: tools, clusters, arrays, driver install, replication setup."""
 from __future__ import annotations
 
+import re
 import uuid
 from html import escape
 
@@ -295,12 +296,40 @@ def make_service_account(request: Request, cid: str,
 
 
 # --- arrays --------------------------------------------------------------------
+ZONE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$")
+
+
+def _check_zone_and_path(access_zone: str, isi_path: str, password: str) -> str:
+    """Catch a zone or path that cannot be right before it reaches the driver secret.
+
+    These two boxes sit directly under the password field, and a browser password
+    manager will happily fill the first text input it finds after one. A password
+    saved as the access zone would be written into isilon-creds and only fail later,
+    so it is refused here and named for what it is.
+    """
+    zone = (access_zone or "").strip()
+    path = (isi_path or "").strip()
+    if password and zone == password:
+        return ("The access zone box contains the password. Your browser filled it in: "
+                "clear that box, type the zone (usually System) and add the array again.")
+    if not ZONE_NAME.match(zone):
+        return (f"{zone!r} is not an access zone name. Zones are letters, digits, dots, "
+                "dashes and underscores, usually System. If your browser filled that box "
+                "in, clear it and type the zone.")
+    if not path.startswith("/ifs"):
+        return (f"{path!r} is not a path on the array. A base path starts with /ifs, "
+                "for example /ifs/data/csi.")
+    return ""
+
 @router.post("/install/arrays", response_class=HTMLResponse)
 def add_array(request: Request, endpoint: str = Form(...), username: str = Form(...),
                     password: str = Form(...), port: int = Form(8080),
                     isi_path: str = Form("/ifs/data/csi"), access_zone: str = Form("System"),
                     skip_cert_validation: str = Form("on"), is_default: str = Form(""),
                     create_path: str = Form(""), auth_type: int = Form(1)):
+    bad = _check_zone_and_path(access_zone, isi_path, password)
+    if bad:
+        return _page(request, error=bad)
     client = OneFS(endpoint, port, username, password,
                    verify=(skip_cert_validation != "on"), auth_type=int(auth_type))
     try:
@@ -317,7 +346,10 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
         elif not any(works.values()):
             hint = (" Neither authentication type worked, so the account, the password or its "
                     "privileges are the problem rather than the setting.")
-        return _page(request, error=f"{endpoint}: {exc}{hint}")
+        said = str(exc).rstrip()
+        if not said.endswith("."):
+            said += "."
+        return _page(request, error=f"{endpoint}: {said}{hint}")
     if create_path == "on" and not client.check_path(isi_path)["exists"]:
         client.create_path(isi_path)
     path_ok = client.check_path(isi_path)["exists"]

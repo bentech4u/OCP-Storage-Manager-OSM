@@ -207,15 +207,17 @@
     <details class="fold" {% if not arrays %}open{% endif %}>
       <summary><span class="chev">▸</span> Add an array
         <span class="muted small">{{ "register the PowerScale systems both sites use" if not arrays else "add another" }}</span></summary>
-    <form hx-post="/install/arrays" hx-target="body">
+    <form hx-post="/install/arrays" hx-target="body" autocomplete="off">
       <fieldset>
         <div class="row three">
           <div class="field"><label>Endpoint</label><input type="text" name="endpoint" placeholder="192.168.68.140" required></div>
           <div class="field"><label>Port</label><input type="number" name="port" value="8080"></div>
-          <div class="field"><label>User</label><input type="text" name="username" placeholder="csiuser" required></div>
+          <div class="field"><label>User</label><input type="text" name="username" placeholder="csiuser"
+            autocomplete="off" required></div>
         </div>
         <div class="row three">
-          <div class="field"><label>Password</label><input type="password" name="password" required></div>
+          <div class="field"><label>Password</label><input type="password" name="password"
+            autocomplete="new-password" required></div>
           <div class="field"><label>&nbsp;</label>
             <button type="button" class="btn sm" hx-post="/install/arrays/discover"
                     hx-target="#array-paths" hx-include="closest form" hx-swap="innerHTML">
@@ -224,8 +226,10 @@
           <div class="field"></div>
         </div>
         <div class="row three" id="array-paths">
-          <div class="field"><label>Access zone</label><input type="text" name="access_zone" value="System"></div>
-          <div class="field"><label>Base path</label><input type="text" name="isi_path" value="/ifs/data/csi"></div>
+          <div class="field"><label>Access zone</label><input type="text" name="access_zone"
+            value="System" autocomplete="off"></div>
+          <div class="field"><label>Base path</label><input type="text" name="isi_path"
+            value="/ifs/data/csi" autocomplete="off"></div>
           <div class="field"></div>
         </div>
         <div class="row three">
