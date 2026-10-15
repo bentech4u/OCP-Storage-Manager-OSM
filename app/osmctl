@@ -631,7 +631,7 @@ def cmd_update(args) -> None:
             print(f"bundle {Path(args.file).name}")
             print(f"  version {info['version']}  commit {info['commit']}  built {info['created']}")
             print(f"  {len(plan['added'])} new, {len(plan['changed'])} changed, "
-                  f"{len(plan['same'])} already identical")
+                  f"{len(plan['same'])} already identical, {len(plan['kept'])} site-owned")
             for name in plan["added"]:
                 print(f"    new      {name}")
             for name in plan["changed"]:
@@ -660,9 +660,14 @@ def cmd_update(args) -> None:
         print(f"bundle {path.name}: version {info['version']}, commit {info['commit']}, "
               f"built {info['created']}")
         print(f"{len(plan['added'])} new file(s), {len(plan['changed'])} changed, "
-              f"{len(plan['same'])} already identical")
+              f"{len(plan['same'])} already identical, {len(plan['kept'])} kept as this site "
+              "has its own")
         for name in plan["changed"][:20]:
             print(f"  changed  {name}")
+        for name in plan["kept"]:
+            print(f"  kept     {name}  (yours differs from the bundle's; not touched)")
+        print("nothing under data, secrets, bin or .repctl is in a bundle, so clusters, "
+              "arrays, kubeconfigs and repctl's store are untouched")
         if not plan["added"] and not plan["changed"]:
             print("nothing to do: this installation already matches the bundle")
             return
@@ -691,6 +696,14 @@ def cmd_update(args) -> None:
                           " - and it is not answering either; check: osmctl service status"))
         if result["restarted"]:
             print("restarted, and the console answered on its health endpoint")
+        check = result.get("integration") or {}
+        if check:
+            print(f"integration after the update: {check['clusters']} cluster(s) "
+                  f"({check['reachable_clusters']} reachable), {check['arrays']} array(s) "
+                  f"({check['reachable_arrays']} reachable), {check['repctl']} registered with "
+                  "repctl")
+            for problem in check.get("problems", []):
+                print(f"  CHECK: {problem}")
         else:
             print("not restarted; run: osmctl service restart")
         return

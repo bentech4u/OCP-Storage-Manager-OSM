@@ -30,8 +30,13 @@ MANIFEST = "osm-bundle.json"
 VERSION_FILE = Path("app") / "VERSION"
 BACKUP_DIR = DATA_DIR / "backups"
 
-# Never written by an update, whatever a bundle claims to contain.
+# Never written by an update, whatever a bundle claims to contain: the state, the
+# credentials, the tools, repctl's own store and the virtual environment.
 PROTECTED = ("data", "secrets", "bin", ".repctl", "app/.venv", "app/tmp")
+
+# Tracked, but belonging to the site once it exists: an update offers a new copy and
+# keeps the local one, because this is where an installation is tuned.
+SITE_OWNED = ("values",)
 
 
 class ReleaseError(RuntimeError):
@@ -125,10 +130,14 @@ def installed() -> dict:
         return {}
 
 
+def _site_owned(name: str) -> bool:
+    return any(name == p or name.startswith(p + "/") for p in SITE_OWNED)
+
+
 def differences(bundle: Path) -> dict:
-    """Which files the bundle would add, change or leave alone."""
+    """Which files the bundle would add, change, keep or leave alone."""
     manifest = inspect(bundle)
-    added, changed, same = [], [], []
+    added, changed, same, kept = [], [], [], []
     for name, digest in manifest["files"].items():
         target = ROOT / name
         if not target.exists():
@@ -139,9 +148,14 @@ def differences(bundle: Path) -> dict:
         except OSError:
             changed.append(name)
             continue
-        (same if current == digest else changed).append(name)
+        if current == digest:
+            same.append(name)
+        elif _site_owned(name):
+            kept.append(name)                  # this site tuned it; leave it alone
+        else:
+            changed.append(name)
     return {"manifest": manifest, "added": sorted(added), "changed": sorted(changed),
-            "same": sorted(same)}
+            "same": sorted(same), "kept": sorted(kept)}
 
 
 # --- applying ----------------------------------------------------------------------
@@ -153,9 +167,12 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
     plan = differences(bundle)
     manifest = plan["manifest"]
 
+    skip = set(plan["kept"]) | set(plan["same"])
     with tarfile.open(bundle, "r:gz") as tar:
         payloads: dict[str, bytes] = {}
         for name, digest in manifest["files"].items():
+            if name in skip:
+                continue
             if not _safe_member(name):
                 raise ReleaseError(f"the bundle wants to write {name}, which is not allowed")
             member = tar.extractfile(name)
@@ -170,6 +187,7 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
 
     before = (ROOT / "app" / "requirements.txt")
     requirements_before = _sha(before.read_bytes()) if before.exists() else ""
+    integration_before = integration_check()
 
     backup = _backup(list(payloads) + [str(VERSION_FILE)])
     written = 0
@@ -184,10 +202,12 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
 
     result = {"version": manifest["version"], "commit": manifest["commit"],
               "written": written, "added": len(plan["added"]), "changed": len(plan["changed"]),
-              "unchanged": len(plan["same"]), "backup": str(backup), "restarted": False,
-              "healthy": None, "rolled_back": False,
+              "unchanged": len(plan["same"]), "kept": plan["kept"],
+              "backup": str(backup), "restarted": False,
+              "healthy": None, "rolled_back": False, "integration": {},
               "requirements_changed": bool(requirements_before)
-              and requirements_before != manifest.get("requirements", "")}
+              and requirements_before != manifest.get("requirements", ""),
+              "_before": integration_before}
 
     if restart:
         from . import maintenance
@@ -199,7 +219,46 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
             maintenance.service("restart")
             result["rolled_back"] = True
             result["healthy_after_rollback"] = _healthy(health_timeout)
+            return result
+    result["integration"] = integration_check(before=result.pop("_before", None))
     return result
+
+
+def integration_check(before: dict | None = None) -> dict:
+    """Confirm the new code still reads everything the old one was using.
+
+    An update writes no state, so these numbers cannot change by themselves. If they
+    do, the new code cannot read what is there, which is worth knowing immediately
+    rather than at the next failover.
+    """
+    from .. import store
+    out: dict = {"clusters": 0, "arrays": 0, "repctl": 0, "reachable_clusters": 0,
+                 "reachable_arrays": 0, "problems": []}
+    try:
+        state = store.load()
+        out["clusters"] = len(state["clusters"])
+        out["arrays"] = len(state["arrays"])
+    except Exception as exc:                               # noqa: BLE001
+        out["problems"].append(f"the state file could not be read: {exc}")
+        return out
+    try:
+        from . import replication
+        out["repctl"] = len(replication.list_clusters().get("rows", []))
+    except Exception as exc:                               # noqa: BLE001
+        out["problems"].append(f"repctl: {exc}")
+    try:
+        from . import inventory
+        data = inventory.snapshot(force=True)
+        out["reachable_clusters"] = sum(1 for c in data["clusters"] if c.get("reachable"))
+        out["reachable_arrays"] = sum(1 for a in data["arrays"] if a.get("reachable"))
+    except Exception as exc:                               # noqa: BLE001
+        out["problems"].append(f"inventory: {exc}")
+    if before:
+        for key in ("clusters", "arrays", "repctl"):
+            if before.get(key) != out[key]:
+                out["problems"].append(
+                    f"{key}: {before.get(key)} before the update, {out[key]} after")
+    return out
 
 
 def _write(target: Path, payload: bytes) -> None:
