@@ -11,11 +11,16 @@
   <div class="banner warn"><span>⚠</span>
     <div>A name that balances across nodes hides this: calls succeed or fail depending on which
       node answers, which is why the console flips between reachable and not.
-      {% if failing|length < results|length %}
-      On the nodes that refuse, check that basic authentication is enabled and the web service was
-      restarted there:
-      <div class="mono small" style="margin-top:.3rem">isi_for_array -s 'isi_gconfig -t web-config | grep auth_basic'</div>
+      {% set reasons = failing | map(attribute='reason') | select | list %}
+      {% if 'basic-off' in reasons %}
+      Those nodes offered no basic authentication challenge, so basic is off there, or the web
+      service has not been restarted since it was switched on:
+      <div class="mono small" style="margin-top:.3rem">isi_gconfig -t web-config | grep auth_basic</div>
       <div class="mono small">isi services -a apache2 disable &amp;&amp; isi services -a apache2 enable</div>
+      {% elif 'credentials' in reasons %}
+      Those nodes do offer basic authentication and still refused, so this is the account rather
+      than the setting: check the password, and that the user holds ISI_PRIV_LOGIN_PAPI in the
+      access zone you are calling.
       {% endif %}
     </div></div>
   {% endif %}

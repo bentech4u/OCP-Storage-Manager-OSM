@@ -273,6 +273,35 @@ def resolve_all(endpoint: str) -> list[str]:
     return sorted({info[4][0] for info in infos})
 
 
+def basic_probe(address: str, port: int, user: str, password: str,
+                timeout: int = 10) -> dict:
+    """Ask one node with basic credentials and look at how it refuses.
+
+    OneFS answers 401 with the same page whether basic authentication is switched off
+    or the credentials are wrong. The difference is the challenge: a node offering
+    basic replies with a WWW-Authenticate header, a node with it switched off does
+    not. That is the only way to tell the two apart from outside.
+    """
+    import base64
+    host = address.replace("https://", "").replace("http://", "").strip("/")
+    url = f"https://{host}:{port}/platform/3/cluster/config"
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    request = urllib.request.Request(url)
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    request.add_header("Authorization", f"Basic {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=ctx) as resp:
+            return {"status": resp.status, "challenge": bool(resp.headers.get("WWW-Authenticate")),
+                    "reachable": True}
+    except urllib.error.HTTPError as exc:
+        return {"status": exc.code, "challenge": bool(exc.headers.get("WWW-Authenticate")),
+                "reachable": True}
+    except Exception as exc:                               # noqa: BLE001
+        return {"status": 0, "challenge": False, "reachable": False, "error": str(exc)[:160]}
+
+
 def which_auth_works(endpoint: str, port: int, user: str, password: str,
                      timeout: int = 10) -> dict:
     """Try both authentication types, so a refusal can say what to use instead."""
@@ -315,16 +344,25 @@ def node_check(endpoint: str, port: int, user: str, password: str, auth_type: in
                 entry["node"] = (data.get("local_serial") or data.get("local_devid") or "")
             elif status == 401:
                 other = which_auth_works(address, port, user, password, timeout=timeout)
-                if client.mode == "basic" and other.get("session"):
-                    entry["detail"] = ("basic authentication is refused here, but session "
-                                       "authentication works: either enable basic on the array "
-                                       "or register this array with session")
-                elif client.mode == "session" and other.get("basic"):
+                probe = basic_probe(address, port, user, password, timeout=timeout)
+                if client.mode == "basic" and not probe.get("challenge"):
+                    entry["detail"] = ("this node offers no basic authentication challenge, so "
+                                       "basic is switched off here or the service has not been "
+                                       "restarted since it was switched on")
+                    entry["reason"] = "basic-off"
+                elif client.mode == "basic":
+                    entry["detail"] = ("this node does offer basic authentication and still "
+                                       "refused, so the account, its password or its privileges "
+                                       "are the problem, not the setting")
+                    entry["reason"] = "credentials"
+                elif other.get("basic"):
                     entry["detail"] = ("session authentication is refused here, but basic works: "
                                        "register this array with basic")
+                    entry["reason"] = "use-basic"
                 else:
                     entry["detail"] = ("the credentials were rejected by this node; check the "
                                        "account, its password and its privileges")
+                    entry["reason"] = "credentials"
             else:
                 entry["detail"] = f"HTTP {status}"
         except ArrayError as exc:
