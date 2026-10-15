@@ -13,3 +13,5 @@ app/.venv/
 # shell
 .bash_history
 .bash_profile
+dist/
+app/VERSION

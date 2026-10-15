@@ -31,7 +31,7 @@ sys.path.insert(0, str(HERE))
 from app import store                                            # noqa: E402
 from app.config import DRIVER_NAMESPACE_DEFAULT, match_owner                  # noqa: E402
 from app.services import (audit, installer, inventory, k8s, maintenance,  # noqa: E402
-                          monitor, replication, tools)
+                          monitor, release, replication, tools)
 from app.services.arrays import ArrayError, OneFS                # noqa: E402
 from app.services.jobs import run_sync                           # noqa: E402
 
@@ -609,6 +609,111 @@ def cmd_alerts(args) -> None:
             print("  " + line)
 
 
+# --- moving a version to a site with no internet --------------------------------
+def cmd_update(args) -> None:
+    if args.sub == "pack":
+        try:
+            path = release.pack(Path(args.out) if args.out else None, args.ref)
+        except release.ReleaseError as exc:
+            die(str(exc))
+        info = release.inspect(path)
+        size = path.stat().st_size
+        print(f"{path}  ({size // 1024} KB)")
+        print(f"  version {info['version']}  commit {info['commit']}  {info['count']} files")
+        print("\nCopy that one file to the installer and run:")
+        print(f"  osmctl update apply {path.name}")
+        return
+
+    if args.sub == "show":
+        if args.file:
+            info = release.inspect(Path(args.file))
+            plan = release.differences(Path(args.file))
+            print(f"bundle {Path(args.file).name}")
+            print(f"  version {info['version']}  commit {info['commit']}  built {info['created']}")
+            print(f"  {len(plan['added'])} new, {len(plan['changed'])} changed, "
+                  f"{len(plan['same'])} already identical")
+            for name in plan["added"]:
+                print(f"    new      {name}")
+            for name in plan["changed"]:
+                print(f"    changed  {name}")
+            return
+        here = release.installed()
+        if here:
+            print(f"installed version {here.get('version', '?')}  commit "
+                  f"{here.get('commit', '?')}  applied from a bundle built {here.get('created', '?')}")
+        else:
+            print("no bundle has been applied here; this tree came from git or a copy")
+        kept = release.backups()
+        if kept:
+            print("\nbackups kept by earlier updates, newest first:")
+            for b in kept:
+                print(f"  {b}")
+        return
+
+    if args.sub == "apply":
+        path = Path(args.file)
+        try:
+            plan = release.differences(path)
+        except (release.ReleaseError, OSError, Exception) as exc:   # noqa: BLE001
+            die(f"cannot read {path}: {exc}")
+        info = plan["manifest"]
+        print(f"bundle {path.name}: version {info['version']}, commit {info['commit']}, "
+              f"built {info['created']}")
+        print(f"{len(plan['added'])} new file(s), {len(plan['changed'])} changed, "
+              f"{len(plan['same'])} already identical")
+        for name in plan["changed"][:20]:
+            print(f"  changed  {name}")
+        if not plan["added"] and not plan["changed"]:
+            print("nothing to do: this installation already matches the bundle")
+            return
+        if not args.yes:
+            answer = input("apply this? type yes: ").strip().lower()
+            if answer != "yes":
+                print("nothing applied")
+                return
+        try:
+            result = release.apply(path, restart=not args.no_restart)
+        except release.ReleaseError as exc:
+            die(str(exc))
+        audit.record("console.update", actor=os.environ.get("SUDO_USER") or "osmctl",
+                     via="shell", target=result["version"], job="",
+                     outcome="rolled-back" if result["rolled_back"] else "ok",
+                     detail=f"{result['written']} files from {path.name}, commit "
+                            f"{result['commit']}", backup=result["backup"])
+        print(f"\nwrote {result['written']} file(s); previous copies kept in {result['backup']}")
+        if result["requirements_changed"]:
+            print("NOTE: app/requirements.txt changed in this bundle. The virtual environment "
+                  "is not updated by an update, and this host has no internet: carry the new "
+                  "wheels across and run .venv/bin/pip install -r app/requirements.txt.")
+        if result["rolled_back"]:
+            die("the console did not answer after the restart, so the previous version was put "
+                "back" + ("" if result.get("healthy_after_rollback") else
+                          " - and it is not answering either; check: osmctl service status"))
+        if result["restarted"]:
+            print("restarted, and the console answered on its health endpoint")
+        else:
+            print("not restarted; run: osmctl service restart")
+        return
+
+    if args.sub == "rollback":
+        kept = release.backups()
+        if not kept:
+            die("no backups from earlier updates")
+        path = Path(args.file) if args.file else kept[0]
+        if not args.yes:
+            answer = input(f"put {path.name} back? type yes: ").strip().lower()
+            if answer != "yes":
+                print("nothing changed")
+                return
+        count = release.restore(path)
+        audit.record("console.rollback", actor=os.environ.get("SUDO_USER") or "osmctl",
+                     via="shell", target=path.name, outcome="ok",
+                     detail=f"{count} files restored")
+        print(f"restored {count} file(s) from {path}")
+        maintenance.service("restart")
+        print("restarted")
+
+
 def cmd_doctor(args) -> None:
     checks = maintenance.doctor()
     area = None
@@ -824,6 +929,25 @@ def build_parser() -> argparse.ArgumentParser:
     ck.add_argument("--send", action="store_true", help="also deliver what it finds")
     ck.set_defaults(func=cmd_alerts)
     alsub.add_parser("test", help="send one test alert").set_defaults(func=cmd_alerts)
+
+    up = sub.add_parser("update", help="move a version to a site with no internet")
+    ups = up.add_subparsers(dest="sub", required=True)
+    pk = ups.add_parser("pack", help="build a bundle here, where git can reach the repository")
+    pk.add_argument("--out", help="directory to write it to (default: <root>/dist)")
+    pk.add_argument("--ref", default="HEAD", help="what to pack: a commit, tag or branch")
+    pk.set_defaults(func=cmd_update)
+    sh = ups.add_parser("show", help="what is installed, or what is in a bundle")
+    sh.add_argument("file", nargs="?", help="a bundle to describe instead")
+    sh.set_defaults(func=cmd_update)
+    ap = ups.add_parser("apply", help="apply a bundle on this host")
+    ap.add_argument("file")
+    ap.add_argument("--no-restart", action="store_true", help="write the files and stop there")
+    ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    ap.set_defaults(func=cmd_update)
+    rb = ups.add_parser("rollback", help="put the previous version back")
+    rb.add_argument("--file", help="a particular backup (default: the newest)")
+    rb.add_argument("--yes", action="store_true")
+    rb.set_defaults(func=cmd_update)
 
     sub.add_parser("doctor", help="check tools, paths, permissions, clusters and arrays").set_defaults(
         func=cmd_doctor)
