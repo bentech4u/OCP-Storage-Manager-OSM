@@ -125,6 +125,47 @@ osmctl admin backup --out /backup/osm.tar.gz
 osmctl service restart | logs --follow
 ```
 
+## Updating a site with no internet
+
+The installer at a secured site cannot reach GitHub, so a version travels as one file.
+Build it where you can pull, carry it across, apply it there.
+
+On the machine with the repository:
+
+```bash
+osmctl update pack
+```
+
+That writes `dist/osm-<version>-<date>.tar.gz` from what git tracks, with a manifest
+holding the commit and a sha256 for every file.
+
+On the installer:
+
+```bash
+osmctl update show osm-<version>-<date>.tar.gz   # what would change, before anything does
+osmctl update apply osm-<version>-<date>.tar.gz
+```
+
+Applying one:
+
+- checks every file against its checksum and refuses a damaged bundle,
+- keeps the current copy of everything it is about to write, under `data/backups`,
+- writes the files, restarts the service and waits for `/healthz`,
+- **puts the previous version back and restarts again if the console does not answer**,
+- then re-reads the clusters, arrays and repctl store in a fresh process and prints what
+  it found, so a bundle that breaks the integration is obvious straight away.
+
+Nothing under `data`, `secrets`, `bin` or `.repctl` is in a bundle, so clusters, arrays,
+kubeconfigs, array credentials and repctl's own store are never touched by an update.
+Anything under `values/` that this site has changed is left alone and reported as kept.
+
+`osmctl update rollback` puts the last backup back by hand. Both commands keep working
+when the installed tree will not import, which is exactly when they are needed.
+
+If `app/requirements.txt` changed in a bundle, the update says so: the virtual
+environment is not touched, and on a host with no internet the new wheels have to be
+carried across and installed with `.venv/bin/pip install -r app/requirements.txt`.
+
 ## Layout
 
 ```

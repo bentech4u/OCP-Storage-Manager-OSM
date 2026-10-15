@@ -30,6 +30,7 @@ SERVICE = os.environ.get("OSM_SERVICE", "ocpstorage-console")
 MANIFEST = "osm-bundle.json"
 VERSION_FILE = Path("app") / "VERSION"
 BACKUP_DIR = DATA_DIR / "backups"
+KEEP_BACKUPS = 10          # older ones are removed as new updates are applied
 
 # Never written by an update, whatever a bundle claims to contain: the state, the
 # credentials, the tools, repctl's own store and the virtual environment.
@@ -334,6 +335,11 @@ def _backup(names: list[str]) -> Path:
             if target.exists():
                 tar.add(target, arcname=name)
     match_owner(path)
+    for old_backup in backups(limit=None)[KEEP_BACKUPS:]:
+        try:
+            old_backup.unlink()
+        except OSError:
+            pass
     return path
 
 
@@ -352,10 +358,11 @@ def restore(backup: Path) -> int:
     return count
 
 
-def backups(limit: int = 10) -> list[Path]:
+def backups(limit: int | None = 10) -> list[Path]:
     if not BACKUP_DIR.exists():
         return []
-    return sorted(BACKUP_DIR.glob("code-*.tar.gz"), reverse=True)[:limit]
+    found = sorted(BACKUP_DIR.glob("code-*.tar.gz"), reverse=True)
+    return found if limit is None else found[:limit]
 
 
 def _healthy(timeout: int) -> bool:
