@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import store
-from .arrays import ArrayError, OneFS
+from .arrays import ArrayError, client_for
 from .k8s import ClusterError, driver_status, kubeconfig_path, probe
 from .tools import status as tool_status
 
@@ -42,9 +42,7 @@ def cluster_snapshot(cluster: dict) -> dict:
 def array_snapshot(array: dict) -> dict:
     out = {k: v for k, v in array.items() if k != "password"}
     try:
-        client = OneFS(array["endpoint"], int(array.get("port", 8080)),
-                       array["username"], array["password"],
-                       verify=not array.get("skip_cert_validation", True))
+        client = client_for(array)
         out.update(client.inspect())
         out["policies"] = client.sync_policies()
         out["error"] = ""

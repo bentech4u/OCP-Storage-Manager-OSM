@@ -295,7 +295,7 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
     client = OneFS(endpoint, port, username, password,
                    verify=(skip_cert_validation != "on"), auth_type=int(auth_type))
     try:
-        info = client.inspect()
+        info = client.inspect(deep=True)
     except ArrayError as exc:
         from ..services.arrays import which_auth_works
         works = which_auth_works(endpoint, port, username, password)

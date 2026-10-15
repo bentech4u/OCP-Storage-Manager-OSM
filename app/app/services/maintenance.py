@@ -15,7 +15,7 @@ from .. import security, store
 from ..config import (BIN_DIR, DATA_DIR, HELM_CHART_DIR, KUBECONFIG_DIR, LOG_DIR, ROOT,
                       SECRET_FILE, STATE_FILE, ensure_dirs)
 from . import replication
-from .arrays import ArrayError, OneFS
+from .arrays import ArrayError, client_for
 from .k8s import ClusterError, probe
 from .tools import status as tool_status
 
@@ -180,8 +180,7 @@ def doctor() -> list[dict]:
 
     for array in state["arrays"].values():
         try:
-            client = OneFS(array["endpoint"], int(array.get("port", 8080)),
-                           array["username"], array["password"])
+            client = client_for(array)
             info = client.inspect()
             add("arrays", f"{array['name']} reachable", True,
                 f"OneFS {info.get('onefs_version','')}")

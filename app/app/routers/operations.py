@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from ..services import inventory, k8s, replication
-from ..services.arrays import ArrayError, OneFS
+from ..services.arrays import ArrayError, client_for
 from ..services.jobs import Job, get as get_job, recent, start
 from ..templating import templates
 
@@ -139,8 +139,7 @@ def synciq_partial(request: Request):
     rows = []
     for array in store.load()["arrays"].values():
         try:
-            client = OneFS(array["endpoint"], int(array.get("port", 8080)),
-                           array["username"], array["password"])
+            client = client_for(array)
             rows.append({"array": array["name"], "policies": client.sync_policies(),
                          "incoming": client.sync_target_policies(),
                          "reports": client.sync_reports(6), "error": ""})
