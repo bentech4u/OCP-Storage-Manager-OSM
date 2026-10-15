@@ -28,12 +28,23 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from app import store                                            # noqa: E402
-from app.config import DRIVER_NAMESPACE_DEFAULT, match_owner                  # noqa: E402
-from app.services import (audit, installer, inventory, k8s, maintenance,  # noqa: E402
-                          monitor, release, replication, tools)
-from app.services.arrays import ArrayError, OneFS                # noqa: E402
-from app.services.jobs import run_sync                           # noqa: E402
+# The update commands have to keep working when the rest does not: a tree left half
+# written, or a module from a newer bundle that this virtual environment cannot import,
+# is exactly when 'osmctl update apply' or 'rollback' is needed. So the application is
+# imported in one piece and a failure is remembered rather than raised.
+BROKEN = ""
+try:
+    from app import store                                        # noqa: E402
+    from app.config import DRIVER_NAMESPACE_DEFAULT, match_owner  # noqa: E402
+    from app.services import (audit, installer, inventory, k8s, maintenance,  # noqa: E402
+                              monitor, replication, tools)
+    from app.services.arrays import ArrayError, OneFS            # noqa: E402
+    from app.services.jobs import run_sync                       # noqa: E402
+except Exception as exc:                                         # noqa: BLE001
+    BROKEN = f"{type(exc).__name__}: {exc}"
+    DRIVER_NAMESPACE_DEFAULT = "isilon"
+
+from app.services import release                                 # noqa: E402
 
 
 def die(message: str) -> None:
@@ -680,11 +691,15 @@ def cmd_update(args) -> None:
             result = release.apply(path, restart=not args.no_restart)
         except release.ReleaseError as exc:
             die(str(exc))
-        audit.record("console.update", actor=os.environ.get("SUDO_USER") or "osmctl",
-                     via="shell", target=result["version"], job="",
-                     outcome="rolled-back" if result["rolled_back"] else "ok",
-                     detail=f"{result['written']} files from {path.name}, commit "
-                            f"{result['commit']}", backup=result["backup"])
+        try:
+            from app.services import audit as audit_now
+            audit_now.record("console.update", actor=os.environ.get("SUDO_USER") or "osmctl",
+                             via="shell", target=result["version"], job="",
+                             outcome="rolled-back" if result["rolled_back"] else "ok",
+                             detail=f"{result['written']} files from {path.name}, commit "
+                                    f"{result['commit']}", backup=result["backup"])
+        except Exception as exc:                            # noqa: BLE001
+            print(f"(the update was not written to the audit record: {exc})")
         print(f"\nwrote {result['written']} file(s); previous copies kept in {result['backup']}")
         if result["requirements_changed"]:
             print("NOTE: app/requirements.txt changed in this bundle. The virtual environment "
@@ -719,12 +734,16 @@ def cmd_update(args) -> None:
                 print("nothing changed")
                 return
         count = release.restore(path)
-        audit.record("console.rollback", actor=os.environ.get("SUDO_USER") or "osmctl",
-                     via="shell", target=path.name, outcome="ok",
-                     detail=f"{count} files restored")
         print(f"restored {count} file(s) from {path}")
-        maintenance.service("restart")
-        print("restarted")
+        try:
+            from app.services import audit as audit_now, maintenance as maint_now
+            audit_now.record("console.rollback", actor=os.environ.get("SUDO_USER") or "osmctl",
+                             via="shell", target=path.name, outcome="ok",
+                             detail=f"{count} files restored")
+            maint_now.service("restart")
+            print("restarted")
+        except Exception as exc:                            # noqa: BLE001
+            print(f"restart it by hand: systemctl restart ocpstorage-console ({exc})")
 
 
 def cmd_doctor(args) -> None:
@@ -1003,4 +1022,9 @@ def build_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     parser = build_parser()
     parsed = parser.parse_args()
+    if BROKEN and parsed.func is not cmd_update:
+        die(f"this installation cannot be loaded ({BROKEN}).\n"
+            "       The update commands still work: 'osmctl update rollback' puts the "
+            "previous version back,\n       and 'osmctl update apply <bundle>' installs "
+            "a good one.")
     parsed.func(parsed)
