@@ -187,6 +187,18 @@ def apply(bundle: Path, restart: bool = True, health_timeout: int = 60) -> dict:
         stamp = tar.extractfile(str(VERSION_FILE))
         version_blob = stamp.read() if stamp else b"{}"
 
+    if not set(manifest["files"]) - set(plan["same"]) - set(plan["kept"]):
+        # already identical: record which bundle this tree matches and leave it alone
+        with tarfile.open(bundle, "r:gz") as tar:
+            stamp = tar.extractfile(str(VERSION_FILE))
+            if stamp:
+                _write(ROOT / VERSION_FILE, stamp.read())
+        return {"version": manifest["version"], "commit": manifest["commit"], "written": 0,
+                "added": 0, "changed": 0, "unchanged": len(plan["same"]),
+                "kept": plan["kept"], "backup": "", "restarted": False, "healthy": None,
+                "rolled_back": False, "integration": {}, "requirements_changed": False,
+                "nothing_to_do": True}
+
     before = (ROOT / "app" / "requirements.txt")
     requirements_before = _sha(before.read_bytes()) if before.exists() else ""
     integration_before = integration_check()

@@ -703,6 +703,7 @@ def cmd_update(args) -> None:
         print("nothing under data, secrets, bin or .repctl is in a bundle, so clusters, "
               "arrays, kubeconfigs and repctl's store are untouched")
         if not plan["added"] and not plan["changed"]:
+            release.apply(path, restart=False)          # records which bundle this matches
             print("nothing to do: this installation already matches the bundle")
             return
         if not args.yes:
