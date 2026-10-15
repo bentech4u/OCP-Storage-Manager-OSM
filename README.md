@@ -139,11 +139,26 @@ osmctl update pack
 That writes `dist/osm-<version>-<date>.tar.gz` from what git tracks, with a manifest
 holding the commit and a sha256 for every file.
 
+The machine that builds it needs nothing but git and python3: the packing code uses
+only the standard library, so a clone is enough.
+
+```bash
+git clone https://github.com/bentech4u/OCP-Storage-Manager-OSM.git osm && cd osm
+OSM_HOME=$PWD python3 app/osmctl update pack
+```
+
 On the installer:
 
 ```bash
 osmctl update show osm-<version>-<date>.tar.gz   # what would change, before anything does
 osmctl update apply osm-<version>-<date>.tar.gz
+```
+
+An installation older than these commands has to be given them once, out of the bundle
+itself, before it can apply one:
+
+```bash
+tar -xzf osm-<version>-<date>.tar.gz -C /opt/ocpstorage app/osmctl app/app/services/release.py
 ```
 
 Applying one:
