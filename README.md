@@ -158,8 +158,14 @@ An installation older than these commands has to be given them once, out of the 
 itself, before it can apply one:
 
 ```bash
-tar -xzf osm-<version>-<date>.tar.gz -C /opt/ocpstorage app/osmctl app/app/services/release.py
+tar -xzf osm-<version>-<date>.tar.gz -C /opt/ocpstorage \
+    app/osmctl app/app/services/release.py app/app/config.py
 ```
+
+`config.py` is in that list because a console older than the updater will not have
+everything the updater reads from it. Extracting it costs nothing on a newer one: the
+file is identical, and `apply` rewrites all three anyway, with the tree's ownership.
+Only this first update needs the step at all.
 
 Applying one:
 
