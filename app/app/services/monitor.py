@@ -139,6 +139,29 @@ def evaluate() -> list[dict]:
                 array.get("error", "no answer from the Platform API"), array.get("endpoint", ""),
                 "Check the management address, the credentials and the API service."))
             continue
+        # an array can answer and still have a node that refuses, which is what makes the
+        # console flip between reachable and not
+        try:
+            from .arrays import node_check, resolve_all
+            record = next((a for a in store.load()["arrays"].values()
+                           if a.get("name") == name or a.get("id") == name), None)
+            if record and len(resolve_all(record["endpoint"])) > 1:
+                nodes = node_check(record["endpoint"], int(record.get("port", 8080)),
+                                   record["username"], record["password"],
+                                   int(record.get("auth_type", 1)), timeout=6)
+                bad = [n for n in nodes if not n["ok"]]
+                if bad and len(bad) < len(nodes):
+                    found.append(_finding(
+                        f"array:{name}:nodes", "critical",
+                        f"Array {name} answers differently depending on the node",
+                        f"{len(bad)} of {len(nodes)} nodes refused: "
+                        + ", ".join(f"{n['address']} ({n['detail'][:40]})" for n in bad[:3]),
+                        record.get("endpoint", ""),
+                        "Check that every node carries the same authentication settings and that "
+                        "the web service was restarted on all of them."))
+        except Exception:                                 # noqa: BLE001
+            pass
+
         if array.get("missing_privileges"):
             found.append(_finding(
                 f"array:{name}:privileges", "warning",
