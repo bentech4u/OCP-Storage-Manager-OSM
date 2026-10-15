@@ -52,7 +52,8 @@ def revoke_sessions() -> str:
 def service(action: str) -> tuple[int, str]:
     if action not in ("start", "stop", "restart", "status", "is-active"):
         raise ValueError(f"unknown action {action}")
-    proc = subprocess.run(["systemctl", action, SERVICE], capture_output=True, text=True)
+    proc = subprocess.run(["systemctl", action, SERVICE], capture_output=True, text=True,
+                          timeout=120)
     return proc.returncode, (proc.stdout or proc.stderr).strip()
 
 
@@ -66,7 +67,7 @@ def service_logs(lines: int = 50, follow: bool = False) -> int:
 def service_environment() -> dict:
     """The environment systemd starts the console with, so checks use the real settings."""
     proc = subprocess.run(["systemctl", "show", SERVICE, "-p", "Environment", "--value"],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=30)
     found = {}
     for item in (proc.stdout or "").split():
         if "=" in item:

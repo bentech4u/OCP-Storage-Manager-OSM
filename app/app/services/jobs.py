@@ -66,8 +66,13 @@ class Job:
 
     # -- helpers --------------------------------------------------------------
     def run(self, cmd: list[str], env: dict | None = None, cwd: str | None = None,
-            stdin_text: str | None = None, echo: bool = True) -> int:
-        """Run a command, streaming stdout+stderr into the job log."""
+            stdin_text: str | None = None, echo: bool = True,
+            timeout: float = 3600.0) -> int:
+        """Run a command, streaming stdout+stderr into the job log.
+
+        A tool that waits for input it will never get would otherwise hold the job
+        open for the life of the console, so the child is given a deadline.
+        """
         if echo:
             self.log("$ " + " ".join(cmd))
         try:
@@ -86,9 +91,25 @@ class Job:
             except BrokenPipeError:
                 pass
         assert proc.stdout is not None
-        for line in proc.stdout:
-            self.log(line)
-        return proc.wait()
+        killer = threading.Timer(timeout, self._give_up, args=(proc, timeout))
+        killer.start()
+        try:
+            for line in proc.stdout:
+                self.log(line)
+            return proc.wait()
+        finally:
+            killer.cancel()
+
+    def _give_up(self, proc, timeout: float) -> None:
+        self.log(f"no output and no exit after {int(timeout)}s: stopping {proc.args[0]}")
+        try:
+            proc.terminate()
+            proc.wait(timeout=20)
+        except Exception:                              # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:                          # noqa: BLE001
+                pass
 
     def snapshot(self, after: int = 0) -> dict:
         with _lock:

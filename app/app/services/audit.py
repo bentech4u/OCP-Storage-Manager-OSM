@@ -7,11 +7,13 @@ before it. Changing or removing a line breaks the chain from that point on, whic
 from __future__ import annotations
 
 import csv
+import fcntl
 import hashlib
 import io
 import json
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +22,27 @@ from ..config import DATA_DIR, ensure_dirs, match_owner
 AUDIT_DIR = DATA_DIR / "audit"
 GENESIS = "0" * 64
 _lock = threading.RLock()
+CHAIN_LOCK = AUDIT_DIR / ".chain.lock"
+
+
+@contextmanager
+def _chain_lock():
+    """Exclusive across processes for the read-then-append step."""
+    handle = None
+    try:
+        handle = open(CHAIN_LOCK, "a+")
+        match_owner(CHAIN_LOCK)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        handle = None
+    try:
+        yield
+    finally:
+        if handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
 
 
 def _now() -> str:
@@ -72,7 +95,11 @@ def record(action: str, actor: str = "", via: str = "", target: str = "",
             pass
         match_owner(AUDIT_DIR)
         stamp = _now()
-        with _lock:
+        with _lock, _chain_lock():
+            # osmctl, the console and the watcher all append here. Reading the last
+            # hash and writing the next line has to be one step: two writers that both
+            # read the same previous hash produce two entries claiming the same parent,
+            # and verify() then reports the record as broken for good.
             entry = {
                 "at": stamp, "action": action, "actor": actor or "system", "via": via or "",
                 "target": target, "outcome": outcome, "detail": detail[:500], "job": job,

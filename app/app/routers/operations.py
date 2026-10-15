@@ -1,6 +1,8 @@
 """Operations: replication groups, failover and friends, SyncIQ state, job history."""
 from __future__ import annotations
 
+from html import escape
+
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 
@@ -199,7 +201,9 @@ def run_action(request: Request, rg: str = Form(...), action: str = Form(...),
         failures = [c for c in replication.preflight(action, rg, cluster, target)
                     if c["level"] == "fail"]
         if failures:
-            rows = "".join(f'<li>{c["what"]}: {c["detail"]}</li>' for c in failures)
+            # the detail carries text from the clusters and arrays, so escape it
+            rows = "".join(f'<li>{escape(str(c["what"]))}: {escape(str(c["detail"]))}</li>'
+                           for c in failures)
             return HTMLResponse(
                 '<div class="banner bad"><span>⚠</span><div><strong>Not run.</strong> '
                 f'{len(failures)} check(s) failed:<ul>{rows}</ul>'

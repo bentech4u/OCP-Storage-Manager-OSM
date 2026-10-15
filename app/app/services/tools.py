@@ -1,6 +1,7 @@
 """Detect and install the command line tools the UI drives."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -145,12 +146,26 @@ def _install_binary(src_bytes: bytes, name: str = "repctl") -> Path:
     return target
 
 
+ALLOWED_DOWNLOAD_HOSTS = ("github.com", "objects.githubusercontent.com",
+                          "release-assets.githubusercontent.com", "api.github.com")
+
+
 def install_repctl_from_url(job: Job, url: str) -> Path:
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise RuntimeError("downloads must use https")
+    host = (parsed.hostname or "").lower()
+    if host not in ALLOWED_DOWNLOAD_HOSTS and not host.endswith(".githubusercontent.com"):
+        raise RuntimeError(
+            f"{host} is not where repctl is published. Download from GitHub, or fetch the "
+            "binary yourself and use the upload option, where you can check it first.")
     job.log(f"downloading {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "osm"})
     with urllib.request.urlopen(req, timeout=180) as resp:
         payload = resp.read()
     job.log(f"downloaded {len(payload)} bytes")
+    job.log("sha256 " + hashlib.sha256(payload).hexdigest())
     path = _install_binary(payload)
     job.log(f"installed {path}")
     _announce_link(job, path)
@@ -160,6 +175,7 @@ def install_repctl_from_url(job: Job, url: str) -> Path:
 
 def install_repctl_from_upload(job: Job, payload: bytes, filename: str) -> Path:
     job.log(f"installing uploaded file {filename} ({len(payload)} bytes)")
+    job.log("sha256 " + hashlib.sha256(payload).hexdigest())
     path = _install_binary(payload)
     job.log(f"installed {path}")
     _announce_link(job, path)

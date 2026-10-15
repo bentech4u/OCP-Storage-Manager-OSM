@@ -11,7 +11,7 @@ import urllib.parse
 
 from . import security, store
 from .config import APP_NAME, APP_TAGLINE, ensure_dirs
-from .routers import api, audit as audit_router, install, operations, setup
+from .routers import api, audit as audit_router, home as home_router, install, operations, setup
 from .services import audit, monitor, oidc
 from .templating import templates
 
@@ -57,6 +57,18 @@ def stop_watcher() -> None:
 @app.get("/healthz", include_in_schema=False)
 async def healthz():
     return {"status": "ok"}
+
+
+def _safe_next(target: str) -> str:
+    """Only ever redirect back into this console.
+
+    "next" arrives from the query string, so without this a crafted sign-in link could
+    hand the operator to another site after a successful login.
+    """
+    value = (target or "/").strip()
+    if not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return "/"
+    return value
 
 
 def _sign_in_options(state: dict) -> list[dict]:
@@ -170,7 +182,7 @@ def login_submit(request: Request, password: str = Form(""), confirm: str = Form
                  via=session.get("via", source), outcome="ok",
                  detail=f"role {session.get('role', 'admin')}",
                  address=request.client.host if request.client else "")
-    response = RedirectResponse(next or "/", status_code=303)
+    response = RedirectResponse(_safe_next(next), status_code=303)
     security.set_session_cookie(response, token, secure=request.url.scheme == "https")
     return response
 
@@ -201,7 +213,7 @@ def oidc_callback(request: Request, code: str = "", state: str = "", error: str 
     parsed = security.read_session_value(state)
     target = "/"
     if parsed and str(parsed.get("u", "")).startswith("state:"):
-        target = parsed["u"].split("state:", 1)[1] or "/"
+        target = _safe_next(parsed["u"].split("state:", 1)[1])
     redirect_uri = cfg.get("redirect_url") or str(request.url_for("oidc_callback"))
     try:
         claims = oidc.exchange_code(cfg, code, redirect_uri)
@@ -211,7 +223,7 @@ def oidc_callback(request: Request, code: str = "", state: str = "", error: str 
     if not role:
         return RedirectResponse("/login?error=" + urllib.parse.quote(
             "that account is not in a group allowed here"), status_code=303)
-    response = RedirectResponse(target, status_code=303)
+    response = RedirectResponse(_safe_next(target), status_code=303)
     security.set_session_cookie(response, security.make_session(
         oidc.account_name(claims), "entra", role), secure=request.url.scheme == "https")
     return response
@@ -226,6 +238,7 @@ def logout(request: Request):
     return response
 
 
+app.include_router(home_router.router)      # /partials/dashboard, the Home refresh
 app.include_router(operations.router)
 app.include_router(install.router)
 app.include_router(setup.router)

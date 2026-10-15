@@ -49,8 +49,17 @@ SESSION_MAX_AGE = 8 * 60 * 60
 
 def ensure_dirs() -> None:
     for d in (DATA_DIR, KUBECONFIG_DIR, BIN_DIR, LOG_DIR):
+        existed = d.exists()
         d.mkdir(parents=True, exist_ok=True)
-        os.chmod(d, 0o700)
+        try:
+            os.chmod(d, 0o700)
+        except PermissionError:
+            pass
+        if not existed:
+            # On a fresh install the first command is often osmctl as root, before the
+            # data directory exists. A directory it creates has to end up belonging to
+            # whoever owns the tree above it, or the console cannot start afterwards.
+            inherit_owner(d)
 
 
 def session_secret() -> str:
@@ -61,7 +70,39 @@ def session_secret() -> str:
     key = secrets.token_urlsafe(48)
     SECRET_FILE.write_text(key)
     os.chmod(SECRET_FILE, 0o600)
+    match_owner(SECRET_FILE)          # root must not keep the key to itself
+    inherit_owner(SECRET_FILE)
     return key
+
+
+def slug(text: str, fallback: str = "") -> str:
+    """A safe identifier: lower case, letters, digits and dashes only.
+
+    Cluster and array ids become file names under the data directory and object names
+    in the clusters, so anything else is rejected rather than cleaned up silently.
+    """
+    cleaned = "".join(c if c.isalnum() or c in "-." else "-" for c in (text or "").strip().lower())
+    cleaned = cleaned.strip("-.")[:63]
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", ".")
+    return cleaned or fallback
+
+
+def inherit_owner(path) -> None:
+    """Give a newly created path the owner of the directory above it."""
+    if os.geteuid() != 0:
+        return
+    target = Path(path)
+    try:
+        parent = target.parent.stat()
+    except OSError:
+        return
+    if parent.st_uid == 0:
+        return
+    try:
+        os.chown(target, parent.st_uid, parent.st_gid)
+    except OSError:
+        pass
 
 
 def owner_of_data() -> tuple[int, int]:

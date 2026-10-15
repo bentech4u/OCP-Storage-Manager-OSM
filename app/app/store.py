@@ -1,15 +1,20 @@
 """Tiny JSON-file state store, good enough for a single-node installer UI."""
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import STATE_FILE, ensure_dirs, match_owner
+from .config import DATA_DIR, STATE_FILE, ensure_dirs, match_owner
 
 _lock = threading.RLock()
+LOCK_FILE = DATA_DIR / "state.lock"
+_depth = 0
+
 
 DEFAULT_STATE: dict[str, Any] = {
     "version": 1,
@@ -51,6 +56,47 @@ DEFAULT_STATE: dict[str, Any] = {
 }
 
 
+@contextmanager
+def _file_lock():
+    """Hold the state across processes, not just across threads.
+
+    osmctl runs in its own process and writes the same file as the console and the
+    watcher. Without this, two read-modify-write cycles overlap and the later save
+    silently drops the earlier change: a password set from the shell, or an array
+    added in the browser, simply disappears.
+
+    update() calls save() while already holding it, so it counts depth: a second
+    flock handle in the same process would wait on the first one forever. Callers
+    always hold the thread lock, which is what makes the counter safe.
+    """
+    global _depth
+    if _depth:
+        _depth += 1
+        try:
+            yield
+        finally:
+            _depth -= 1
+        return
+    ensure_dirs()
+    handle = None
+    try:
+        handle = open(LOCK_FILE, "a+")
+        match_owner(LOCK_FILE)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        handle = None                     # a read-only data dir must not stop the console
+    _depth = 1
+    try:
+        yield
+    finally:
+        _depth = 0
+        if handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -76,14 +122,16 @@ def _read() -> dict:
 
 
 def load() -> dict:
-    with _lock:
+    with _lock, _file_lock():
         return _read()
 
 
 def save(state: dict) -> None:
     ensure_dirs()
-    with _lock:
-        tmp = STATE_FILE.with_suffix(".tmp")
+    with _lock, _file_lock():
+        # a name of this process's own: two writers sharing one temp file delete it
+        # from under each other if the lock ever fails to apply
+        tmp = STATE_FILE.with_suffix(f".tmp.{os.getpid()}")
         tmp.write_text(json.dumps(state, indent=2))
         os.chmod(tmp, 0o600)
         match_owner(tmp)
@@ -92,7 +140,7 @@ def save(state: dict) -> None:
 
 def update(fn) -> dict:
     """Read-modify-write under the lock. fn receives and mutates the state."""
-    with _lock:
+    with _lock, _file_lock():
         state = _read()
         fn(state)
         save(state)

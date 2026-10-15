@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from ..config import KUBECONFIG_DIR, ensure_dirs, match_owner, tool_env
+from ..config import KUBECONFIG_DIR, ensure_dirs, match_owner, slug, tool_env
 from .jobs import Job
 from .tools import which
 
@@ -47,7 +47,10 @@ def run_json(kubeconfig: str | Path, args: list[str], timeout: int = 60) -> dict
 
 def kubeconfig_path(cluster_id: str) -> Path:
     ensure_dirs()
-    return KUBECONFIG_DIR / f"{cluster_id}.kubeconfig"
+    name = slug(cluster_id)
+    if not name:
+        raise ClusterError(f"{cluster_id!r} is not a usable cluster id")
+    return KUBECONFIG_DIR / f"{name}.kubeconfig"
 
 
 def validate_kubeconfig(content: str) -> dict:

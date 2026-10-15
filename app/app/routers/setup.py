@@ -74,7 +74,9 @@ def save_oidc(request: Request, enabled: str = Form(""), provider: str = Form("e
     cfg = {
         "enabled": enabled == "on", "provider": provider, "tenant_id": tenant_id.strip(),
         "issuer": issuer.strip(), "client_id": client_id.strip(),
-        "client_secret": client_secret.strip(), "redirect_url": redirect_url.strip(),
+        "client_secret": (client_secret.strip()
+                          or store.load()["setup"]["oidc"].get("client_secret", "")),
+        "redirect_url": redirect_url.strip(),
         "allowed_groups": [g.strip() for g in allowed_groups.split(",") if g.strip()],
         "viewer_groups": [g.strip() for g in viewer_groups.split(",") if g.strip()],
         "scope": scope.strip() or "openid profile email",
@@ -176,7 +178,9 @@ def save_alerts(request: Request, enabled: str = Form(""), smtp_host: str = Form
                       renotify_hours: int = Form(6)):
     cfg = {
         "enabled": enabled == "on", "smtp_host": smtp_host.strip(), "smtp_port": int(smtp_port),
-        "smtp_user": smtp_user.strip(), "smtp_password": smtp_password,
+        "smtp_user": smtp_user.strip(),
+        "smtp_password": (smtp_password
+                          or store.load()["setup"]["alerts"].get("smtp_password", "")),
         "smtp_tls": smtp_tls == "on", "mail_from": mail_from.strip(),
         "mail_to": [m.strip() for m in mail_to.split(",") if m.strip()],
         "webhook_url": webhook_url.strip(),

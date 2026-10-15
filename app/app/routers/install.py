@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import uuid
+from html import escape
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 
-from .. import store
+from .. import config, store
 from ..config import DRIVER_NAMESPACE_DEFAULT, match_owner
 from ..services import audit, installer, inventory, k8s, replication, tools
 from ..services.arrays import ArrayError, OneFS
@@ -22,6 +23,11 @@ async def _page_async(request: Request, **extra):
     return await run_in_threadpool(lambda: _page(request, **extra))
 
 
+def _safe(record: dict) -> dict:
+    """A copy without the array password, for anything handed to a template."""
+    return {k: v for k, v in record.items() if k != "password"}
+
+
 def _page(request: Request, **extra):
     state = store.load()
     data = inventory.snapshot()
@@ -31,9 +37,9 @@ def _page(request: Request, **extra):
              "install": state["installs"].get(c["id"]), "selected": False}
             for c in data["clusters"]]
     ctx = {
-        "page": "install", "state": state, "data": data,
+        "page": "install", "data": data,
         "clusters": list(state["clusters"].values()),
-        "arrays": list(state["arrays"].values()),
+        "arrays": [_safe(a) for a in state["arrays"].values()],
         "tools": data["tools"],
         "repctl_default": tools.default_repctl_choice(),
         "namespace_default": DRIVER_NAMESPACE_DEFAULT,
@@ -171,9 +177,10 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
                       api_server: str = Form(""), username: str = Form(""),
                       password: str = Form(""), insecure: str = Form("on"),
                       kubeconfig_file: UploadFile | None = File(None)):
-    cid = cluster_id.strip().lower().replace(" ", "-")
+    cid = config.slug(cluster_id)
     if not cid:
-        return await _page_async(request, error="give the cluster an id")
+        return await _page_async(request, error=(
+            "give the cluster an id made of letters, digits and dashes"))
 
     def connect():
         """Reaching a cluster can take a while, so it happens off the event loop."""
@@ -312,7 +319,9 @@ def add_array(request: Request, endpoint: str = Form(...), username: str = Form(
     if create_path == "on" and not client.check_path(isi_path)["exists"]:
         client.create_path(isi_path)
     path_ok = client.check_path(isi_path)["exists"]
-    aid = (info.get("name") or endpoint).lower().replace(" ", "-")
+    aid = config.slug(info.get("name") or endpoint)
+    if not aid:
+        return _page(request, error="this array's name cannot be used as an id")
     record = {
         "id": aid, "name": info.get("name") or aid, "endpoint": endpoint, "port": port,
         "username": username, "password": password, "isi_path": isi_path,
@@ -354,7 +363,7 @@ def array_nodes(request: Request, aid: str):
     results = node_check(array["endpoint"], int(array.get("port", 8080)), array["username"],
                          array["password"], int(array.get("auth_type", 1)))
     return templates.TemplateResponse(request, "partials/array_nodes.html", {
-        "array": array, "results": results, "addresses": addresses,
+        "array": _safe(array), "results": results, "addresses": addresses,
         "failing": [r for r in results if not r["ok"]],
     })
 
@@ -473,12 +482,34 @@ async def install_driver(request: Request):
 
 
 @router.post("/install/driver/uninstall", response_class=HTMLResponse)
-def uninstall_driver(request: Request, cluster_id: str = Form(...)):
+def uninstall_driver(request: Request, cluster_id: str = Form(...), force: str = Form("")):
     state = store.load()
     cluster = state["clusters"].get(cluster_id)
     if not cluster:
         return HTMLResponse('<div class="banner bad">unknown cluster</div>')
     ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+
+    # Removing the driver from a cluster that still serves volumes takes the storage
+    # away from whatever is running on it, so say what is there and make it deliberate.
+    if force != "on":
+        try:
+            pvs = k8s.run_json(cluster["kubeconfig"], ["get", "pv"]).get("items", [])
+        except k8s.ClusterError:
+            pvs = []
+        live = [pv for pv in pvs
+                if "isilon" in ((pv.get("spec", {}).get("csi") or {}).get("driver", ""))
+                and pv.get("status", {}).get("phase") == "Bound"]
+        if live:
+            names = ", ".join(sorted(
+                f"{(pv['spec'].get('claimRef') or {}).get('namespace', '?')}/"
+                f"{(pv['spec'].get('claimRef') or {}).get('name', pv['metadata']['name'])}"
+                for pv in live)[:6])
+            return HTMLResponse(
+                '<div class="banner bad"><span>⚠</span><div><strong>Not uninstalled.</strong> '
+                f'{len(live)} volume(s) on {escape(cluster_id)} are still bound: '
+                f'{escape(names)}. Those workloads lose their storage when the driver goes. '
+                'Move or delete them first, or run the uninstall again with the override.'
+                '</div></div>')
 
     def work(job: Job):
         installer.helm_uninstall_driver(job, cluster["kubeconfig"], ns)
@@ -509,6 +540,17 @@ async def create_storage_class(request: Request):
         "reclaim_policy": form.get("reclaim_policy", "Delete"),
         "binding_mode": form.get("binding_mode", "Immediate"),
     }
+    rpo = form.get("rpo", "Five_Minutes")
+    prefix = (form.get("volume_group_prefix") or "csi-prod").strip()
+    if replicated and rpo not in installer.RPO_VALUES:
+        return HTMLResponse('<div class="banner bad">'
+                            f'{escape(rpo)} is not a recovery point the driver accepts. '
+                            f'Choose one of: {", ".join(installer.RPO_VALUES)}.</div>')
+    if replicated and (len(prefix) > 20 or not prefix.replace("-", "").isalnum()):
+        return HTMLResponse('<div class="banner bad">The volume group prefix must be letters, '
+                            'digits and dashes, at most 20 characters: it is joined with the '
+                            'namespace, the far array address and the objective to make the '
+                            'directory name on the array, which OneFS caps at 63.</div>')
     tgt = state["clusters"].get(form.get("target_cluster", "")) if replicated else None
     tgt_array = state["arrays"].get(form.get("target_array", "")) if replicated else None
     if replicated and (not tgt or not tgt_array):
@@ -520,9 +562,9 @@ async def create_storage_class(request: Request):
                 "remote_storage_class": name, "remote_cluster_id": tgt["id"],
                 "remote_system": tgt_array["name"],
                 "remote_az_service_ip": form.get("target_az_service_ip") or tgt_array["endpoint"],
-                "rpo": form.get("rpo", "Five_Minutes"),
+                "rpo": rpo,
                 "ignore_namespaces": form.get("ignore_namespaces") == "on",
-                "volume_group_prefix": form.get("volume_group_prefix", "csi-prod"),
+                "volume_group_prefix": prefix,
                 "remote_access_zone": tgt_array.get("access_zone", "System"),
             }
             tgt_rep = dict(src_rep)

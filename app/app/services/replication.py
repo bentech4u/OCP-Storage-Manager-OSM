@@ -464,7 +464,7 @@ def rg_state(kubeconfig: str, rg: str) -> dict:
             pass
     return {"pending": pending, "action": current, "completed": completed, "error": failure,
             "state": status.get("state", ""), "link": link.get("state", ""),
-            "is_source": link.get("isSource")}
+            "is_source": link.get("isSource"), "raw": annotation}
 
 
 def busy(kubeconfig: str, rg: str) -> str:
@@ -645,6 +645,11 @@ def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
                 f"{rg} is still running {running} on {cid}. Actions are written onto the group "
                 "one at a time, and a second one issued now would be dropped. Let it finish.")
 
+    # The annotation from the last action stays on the group. A failover run after an
+    # earlier failover would match it on the first look and be called finished before
+    # the driver had done anything, so remember what was there and insist it changes.
+    before = {cid: rg_state(kc, rg).get("raw", "") for cid, kc in watching.items()}
+
     args = build_args(rg, action, target_cluster, unplanned, discard)
     job.log("repctl " + " ".join(args))
     rc = run_repctl(job, args)
@@ -654,6 +659,7 @@ def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
     expected = EXPECTED_ANNOTATION.get(action, ())
     job.log("waiting for the cluster to carry it out")
     last = ""
+    saw_work = False          # the group was seen working at least once during the wait
     for _ in range(max(1, wait // 5)):
         time.sleep(5)
         seen, working, failure = False, False, ""
@@ -663,9 +669,14 @@ def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
             lines.append(f"  {cid}: state={now.get('state','?')} link={now.get('link','?')} "
                          f"source={now.get('is_source')} action={now.get('action','-')}"
                          f"{'' if now.get('completed') else ' (running)'}")
-            arrived = now.get("action") in expected if expected else True
+            matches = now.get("action") in expected if expected else True
+            # a repeat of the same action can leave an identical annotation, so a run
+            # we watched go through counts even when the text did not change
+            changed = now.get("raw", "") != before.get(cid, "") or saw_work
+            arrived = changed and matches
             if "IN_PROGRESS" in (now.get("state") or "") or now.get("pending"):
                 working = True
+                saw_work = True
             if arrived and now.get("completed"):
                 seen = True
                 if now.get("error"):
@@ -679,8 +690,11 @@ def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
             return 1
         if seen and not working:
             job.log("action finished")
+            job.result["confirmed"] = True
             return 0
-    job.log("still running after the wait; check the group on the Operations page")
+    job.log("the clusters have not recorded this action yet; it may still be running. "
+            "Check the group on the Operations page before issuing another one.")
+    job.result["confirmed"] = False
     return 0
 
 

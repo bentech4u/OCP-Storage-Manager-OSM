@@ -86,7 +86,8 @@
       </div>
       <div class="row three">
         <div class="field"><label>Application (client) id</label><input type="text" name="client_id" value="{{ setup.oidc.client_id }}"></div>
-        <div class="field"><label>Client secret</label><input type="password" name="client_secret" value="{{ setup.oidc.client_secret }}"></div>
+        <div class="field"><label>Client secret</label><input type="password" name="client_secret" autocomplete="new-password"
+               placeholder="{{ "stored, leave blank to keep" if setup.oidc.client_secret else "not set" }}"></div>
         <div class="field"><label>Redirect address</label>
           <input type="text" name="redirect_url" id="redirect_url"
                  value="{{ setup.oidc.redirect_url }}" placeholder="{{ suggested_redirect }}">
@@ -164,7 +165,8 @@
       </div>
       <div class="row three">
         <div class="field"><label>User</label><input type="text" name="smtp_user" value="{{ setup.alerts.smtp_user }}"></div>
-        <div class="field"><label>Password</label><input type="password" name="smtp_password" value="{{ setup.alerts.smtp_password }}"></div>
+        <div class="field"><label>Password</label><input type="password" name="smtp_password" autocomplete="new-password"
+               placeholder="{{ "stored, leave blank to keep" if setup.alerts.smtp_password else "not set" }}"></div>
         <div class="field" style="display:flex;align-items:flex-end">
           <div class="check"><input type="checkbox" id="tls" name="smtp_tls" {% if setup.alerts.smtp_tls %}checked{% endif %}>
             <label for="tls">Use STARTTLS</label></div></div>

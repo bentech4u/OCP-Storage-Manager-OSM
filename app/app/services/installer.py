@@ -78,7 +78,9 @@ def build_values(opts: dict) -> dict:
 
 
 def values_file(opts: dict) -> Path:
-    path = Path(tempfile.mkstemp(prefix="isilon-values-", suffix=".yaml")[1])
+    handle, name = tempfile.mkstemp(prefix="isilon-values-", suffix=".yaml")
+    os.close(handle)                       # mkstemp hands back an open descriptor
+    path = Path(name)
     path.write_text(yaml.safe_dump(build_values(opts), sort_keys=False))
     os.chmod(path, 0o600)
     return path
