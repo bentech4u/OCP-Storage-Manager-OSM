@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import json
 import ssl
-import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,33 +43,12 @@ class ArrayError(RuntimeError):
 
 AUTH_TYPES = {1: "session", 0: "basic"}
 
-# A session cookie belongs to the node that issued it and the array keeps a limited
-# number of sessions per account, so logging in on every dashboard refresh eventually
-# gets refused with the same 401 as a bad password. Sessions are kept here and reused.
-_SESSIONS: dict[tuple, tuple[str, str, float]] = {}
-_SESSION_LOCK = threading.Lock()
-SESSION_TTL = 600.0
-
-
-def client_for(array: dict, timeout: int = 15) -> "OneFS":
-    """Build a client from a registered array, honouring how it was registered."""
-    return OneFS(array["endpoint"], int(array.get("port", 8080)),
-                 array["username"], array["password"],
-                 verify=not array.get("skip_cert_validation", True),
-                 timeout=timeout, auth_type=int(array.get("auth_type", 1)))
-
 
 class OneFS:
     def __init__(self, endpoint: str, port: int, user: str, password: str,
                  verify: bool = False, timeout: int = 15, auth_type: int = 1):
         host = endpoint.replace("https://", "").replace("http://", "").strip("/")
-        self.host, self.port, self.verify = host, port, verify
-        # Talk to one node for the life of this client: a balanced name hands each
-        # connection to a different node, and a session cookie is only valid on the
-        # node that issued it. Certificate checking forces the name instead.
-        self._addresses = [host] if verify else (resolve_all(host) or [host])
-        self._pos = 0
-        self.base = f"https://{self._addresses[0]}:{port}"
+        self.base = f"https://{host}:{port}"
         self.user, self.password, self.timeout = user, password, timeout
         self.ctx = ssl.create_default_context()
         if not verify:
@@ -96,29 +73,7 @@ class OneFS:
             req.add_header("X-CSRF-Token", self.csrf or "")
             req.add_header("Referer", self.base)
 
-    def _next_node(self) -> bool:
-        """Move to another node behind the name after a connection failure."""
-        if len(self._addresses) < 2:
-            return False
-        self._pos = (self._pos + 1) % len(self._addresses)
-        self.base = f"https://{self._addresses[self._pos]}:{self.port}"
-        self.cookie = self.csrf = None
-        return True
-
-    def _session_key(self) -> tuple:
-        # the password belongs in the key: a changed password must not keep riding
-        # on the session the old one opened
-        import hashlib
-        digest = hashlib.sha256(self.password.encode()).hexdigest()[:16]
-        return (self.base, self.user, digest)
-
-    def _drop_session(self) -> None:
-        with _SESSION_LOCK:
-            _SESSIONS.pop(self._session_key(), None)
-        self.cookie = self.csrf = None
-
-    def _req(self, method: str, path: str, body: Any = None, auth: str = "session",
-             retry: bool = True) -> tuple[int, Any]:
+    def _req(self, method: str, path: str, body: Any = None, auth: str = "session") -> tuple[int, Any]:
         url = self.base + path
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
@@ -132,34 +87,11 @@ class OneFS:
                 payload = resp.read()
                 return resp.status, _json(payload)
         except urllib.error.HTTPError as exc:
-            # A stale or evicted session answers exactly like a wrong password. Take a
-            # fresh one once before believing the 401.
-            if exc.code == 401 and retry and auth == "session" and self.mode == "session":
-                self._drop_session()
-                try:
-                    self.login(force=True)
-                except ArrayError:
-                    return exc.code, _json(exc.read())
-                return self._req(method, path, body, auth, retry=False)
             return exc.code, _json(exc.read())
         except (urllib.error.URLError, OSError, ssl.SSLError) as exc:
-            if retry and self._next_node():
-                return self._req(method, path, body, auth, retry=False)
             raise ArrayError(f"cannot reach {self.base}: {exc}") from exc
 
-    def login(self, force: bool = False) -> None:
-        key = self._session_key()
-        with _SESSION_LOCK:
-            cached = _SESSIONS.get(key)
-        if cached and not force and time.time() - cached[2] < SESSION_TTL:
-            self.cookie, self.csrf = cached[0], cached[1]
-            return
-        if cached:
-            # hand the old one back rather than leaving it to age out: the array keeps
-            # only so many sessions per account and refuses the next login when full
-            self._close(cached[0], cached[1])
-            with _SESSION_LOCK:
-                _SESSIONS.pop(key, None)
+    def login(self) -> None:
         body = {"username": self.user, "password": self.password,
                 "services": ["platform", "namespace"]}
         data = json.dumps(body).encode()
@@ -181,25 +113,12 @@ class OneFS:
         if csrf:
             self.cookie += f"; isicsrf={csrf.group(1)}"
             self.csrf = csrf.group(1)
-        with _SESSION_LOCK:
-            _SESSIONS[key] = (self.cookie, self.csrf, time.time())
-
-    def _close(self, cookie: str, csrf: str | None) -> None:
-        """Delete a session on the array, best effort."""
-        req = urllib.request.Request(self.base + "/session/1/session", method="DELETE")
-        req.add_header("Cookie", cookie)
-        req.add_header("X-CSRF-Token", csrf or "")
-        req.add_header("Referer", self.base)
-        try:
-            urllib.request.urlopen(req, timeout=5, context=self.ctx).close()
-        except Exception:                                   # noqa: BLE001
-            pass
 
     def get(self, path: str) -> tuple[int, Any]:
         return self._req("GET", path)
 
     # -- discovery ------------------------------------------------------------
-    def inspect(self, deep: bool = False) -> dict:
+    def inspect(self) -> dict:
         """Everything the UI shows about an array, in one round trip set."""
         out: dict = {"reachable": False, "errors": [], "auth_type": self.auth_type,
                      "auth_mode": self.mode}
@@ -210,9 +129,8 @@ class OneFS:
         else:                                   # basic: prove it on an endpoint that needs rights
             st, data = self.get("/platform/3/cluster/config")
             if st == 401:
-                raise ArrayError("401 from the array: " +
-                                 diagnose_401(self.base, self.user, self.password,
-                                              self.timeout, basic=True)["detail"])
+                raise ArrayError("this array refuses basic authentication. Either choose session "
+                                 "(isiAuthType 1), or " + ENABLE_BASIC_HINT)
             if st == 403:
                 raise ArrayError("basic authentication worked but the user lacks "
                                  "ISI_PRIV_LOGIN_PAPI")
@@ -249,8 +167,7 @@ class OneFS:
             if p not in privs or (need == "rw" and not privs[p])
         ]
         out["can_replicate"] = privs.get(REPLICATION_PRIV, False)
-        if deep:                                # registration only: this costs a session
-            out["auth_supported"] = self.auth_capabilities()
+        out["auth_supported"] = self.auth_capabilities()
         st, sync = self.get("/platform/16/sync/settings")
         if st == 200:
             s = sync.get("settings", sync)
@@ -282,7 +199,7 @@ class OneFS:
             result["session"] = False
         finally:
             self.mode = saved
-            self.cookie = self.csrf = None
+            self.cookie = None
         return result
 
     def check_path(self, isi_path: str) -> dict:
@@ -385,40 +302,6 @@ def basic_probe(address: str, port: int, user: str, password: str,
         return {"status": 0, "challenge": False, "reachable": False, "error": str(exc)[:160]}
 
 
-def diagnose_401(base: str, user: str, password: str, timeout: int = 10,
-                 basic: bool = True) -> dict:
-    """Separate a wrong password from a missing privilege after a 401.
-
-    OneFS serves the same "Unauthorized to access PAPI" page for both, so the body is
-    no help. The session endpoint is: it checks the password alone. If a session opens
-    and a read still fails, the password is right and the privilege is missing; if the
-    session opens and the read works, only basic is being refused here.
-    """
-    host = base.replace("https://", "").rsplit(":", 1)
-    address, port = host[0], int(host[1]) if len(host) > 1 else 8080
-    probe = OneFS(address, port, user, password, auth_type=1, timeout=timeout)
-    try:
-        probe.login(force=True)
-    except ArrayError as exc:
-        if "401" in str(exc):
-            return {"reason": "credentials",
-                    "detail": "the password was refused outright, so the account, its password "
-                              "or its state (locked, disabled, expired) is the problem"}
-        return {"reason": "unclear", "detail": str(exc)[:160]}
-    status, _ = probe.get("/platform/3/cluster/config")
-    if status == 200 and basic:
-        return {"reason": "basic-off",
-                "detail": "the same credentials work over a session, so the account is fine and "
-                          "this node is refusing basic authentication: " + ENABLE_BASIC_HINT}
-    if status == 200:
-        return {"reason": "unclear",
-                "detail": "a fresh session works, so the earlier refusal was a stale session"}
-    return {"reason": "privileges",
-            "detail": "the password is accepted but the Platform API still refuses the account, "
-                      "so it is missing ISI_PRIV_LOGIN_PAPI or the role is not applied yet "
-                      "(flush with isi_for_array -s 'isi auth cache flush --all')"}
-
-
 def which_auth_works(endpoint: str, port: int, user: str, password: str,
                      timeout: int = 10) -> dict:
     """Try both authentication types, so a refusal can say what to use instead."""
@@ -460,13 +343,6 @@ def node_check(endpoint: str, port: int, user: str, password: str, auth_type: in
                                   f"{(data.get('onefs_version') or {}).get('release', '')}"
                 entry["node"] = (data.get("local_serial") or data.get("local_devid") or "")
             elif status == 401:
-                verdict = diagnose_401(client.base, user, password, timeout,
-                                       basic=client.mode == "basic")
-                if verdict["reason"] != "unclear":
-                    entry["detail"] = verdict["detail"]
-                    entry["reason"] = verdict["reason"]
-                    results.append(entry)
-                    continue
                 other = which_auth_works(address, port, user, password, timeout=timeout)
                 probe = basic_probe(address, port, user, password, timeout=timeout)
                 if client.mode == "basic" and not probe.get("challenge"):
@@ -493,24 +369,6 @@ def node_check(endpoint: str, port: int, user: str, password: str, auth_type: in
             entry["detail"] = str(exc)[:160]
         results.append(entry)
     return results
-
-
-def message_of(data: Any) -> str:
-    """The array's own words for a refusal, which say more than the status code.
-
-    A missing ISI_PRIV_LOGIN_PAPI and a wrong password are both 401; only the body
-    tells them apart.
-    """
-    if isinstance(data, dict):
-        for err in data.get("errors") or []:
-            if err.get("message"):
-                return str(err["message"])[:160]
-        if data.get("message"):
-            return str(data["message"])[:160]
-        raw = str(data.get("raw", ""))
-        if "Unauthorized to access PAPI" in raw:
-            return "Unauthorized to access PAPI"
-    return ""
 
 
 def _json(payload: bytes) -> Any:

@@ -44,6 +44,29 @@ except Exception as exc:                                         # noqa: BLE001
     BROKEN = f"{type(exc).__name__}: {exc}"
     DRIVER_NAMESPACE_DEFAULT = "isilon"
 
+
+class _Missing:
+    """Stands in for a module that would not import, so the parser can still be built.
+
+    argparse reads defaults and choices out of the application while it builds, which
+    on a broken tree happens before any command runs. Every command that needs the
+    real thing is refused with the reason.
+    """
+
+    SA_NAME = "osm-console"
+    SA_NAMESPACE = "osm"
+    SA_CLUSTER_ROLE = "cluster-admin"
+    RPO_VALUES = ["Five_Minutes"]
+    ACTIONS: dict = {}
+
+    def __getattr__(self, name):
+        raise SystemExit(f"error: this installation cannot be loaded ({BROKEN}). "
+                         "Repair it with: osmctl update rollback")
+
+
+if BROKEN:
+    k8s = installer = replication = _Missing()               # noqa: F811
+
 from app.services import release                                 # noqa: E402
 
 
