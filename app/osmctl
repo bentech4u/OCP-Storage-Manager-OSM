@@ -283,12 +283,20 @@ def cmd_driver_install(args) -> None:
             installer.operator_install(job, cluster["kubeconfig"], pkg, channel, source)
             installer.operator_apply_cr(job, cluster["kubeconfig"], ns, opts, arrays, default_array)
         else:
+            found = installer.helm_releases(cluster["kubeconfig"], ns)
+            job.log("helm already has in this namespace: " + (", ".join(
+                f"{r['name']} ({r['chart']}, {r['status']})" for r in found) or "nothing"))
             installer.helm_install_driver(job, cluster["kubeconfig"], ns, opts, arrays,
-                                          upgrade=args.upgrade, default_array_id=default_array)
+                                          upgrade=args.upgrade, default_array_id=default_array,
+                                          release=args.release,
+                                          reuse_values=args.reuse_values,
+                                          manage_secret=not args.keep_secret)
         store.update(lambda s: s["installs"].update({args.cluster: {
             "method": args.method, "namespace": ns, "mode": args.mode,
             "when": store.now(), "arrays": [a["id"] for a in arrays],
-            "default_array": default_array}}))
+            "default_array": default_array,
+            "release": args.release if args.method == "helm" else "",
+            "adopted": args.reuse_values or args.keep_secret}}))
         inventory.invalidate()
 
     job = run_sync(f"install driver on {args.cluster}", "driver", work, cluster=args.cluster)
@@ -296,10 +304,14 @@ def cmd_driver_install(args) -> None:
 
 
 def cmd_driver_uninstall(args) -> None:
-    cluster = store.load()["clusters"].get(args.cluster) or die(f"unknown cluster {args.cluster}")
+    state = store.load()
+    cluster = state["clusters"].get(args.cluster) or die(f"unknown cluster {args.cluster}")
     ns = args.namespace or cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+    release = args.release or (state["installs"].get(args.cluster, {}) or {}).get("release") \
+        or "isilon"
     job = run_sync(f"uninstall driver on {args.cluster}", "driver",
-                   lambda j: installer.helm_uninstall_driver(j, cluster["kubeconfig"], ns),
+                   lambda j: installer.helm_uninstall_driver(j, cluster["kubeconfig"], ns,
+                                                             release=release),
                    cluster=args.cluster)
     raise SystemExit(0 if job.status == "ok" else 1)
 
@@ -897,6 +909,12 @@ def build_parser() -> argparse.ArgumentParser:
     di.add_argument("--package")
     di.add_argument("--channel")
     di.add_argument("--upgrade", action="store_true")
+    di.add_argument("--release", default="isilon",
+                    help="helm release to install or adopt, as helm list shows it")
+    di.add_argument("--reuse-values", action="store_true",
+                    help="keep the values the release already has; only switch replication")
+    di.add_argument("--keep-secret", action="store_true",
+                    help="do not write isilon-creds; leave the existing one alone")
     di.add_argument("--no-quota", action="store_true")
     di.add_argument("--no-snapshots", action="store_true")
     di.add_argument("--verify-tls", action="store_true")
@@ -904,6 +922,7 @@ def build_parser() -> argparse.ArgumentParser:
     du = d.add_parser("uninstall")
     du.add_argument("--cluster", required=True)
     du.add_argument("--namespace")
+    du.add_argument("--release", default="", help="defaults to the release this console installed")
     du.set_defaults(func=cmd_driver_uninstall)
 
     s = sub.add_parser("sc", help="storage classes").add_subparsers(dest="sub", required=True)

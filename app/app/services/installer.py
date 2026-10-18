@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import base64
 import copy
+import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import yaml
 
 from ..config import (DEFAULT_VALUES, DRIVER_CHART, OPERATOR_NAMESPACE, REPLICATION_CHART,
                       REPLICATION_CRDS, tool_env)
+from . import manifests
 from .arrays import secret_yaml
 from .jobs import Job
 from .k8s import ClusterError, cli, run, run_json
@@ -100,6 +103,9 @@ def ensure_namespace(job: Job, kubeconfig: str, ns: str) -> None:
 
 def apply_manifest(job: Job, kubeconfig: str, manifest: str, what: str) -> None:
     job.log(f"applying {what}")
+    kept = manifests.save(manifest, what, job=job.id, cluster=job.cluster or "")
+    if kept:
+        job.log(f"  manifest written to {kept}")
     proc = run(kubeconfig, ["apply", "-f", "-"], stdin_text=manifest, timeout=180)
     job.log((proc.stdout or "") + (proc.stderr or ""))
     if proc.returncode != 0:
@@ -159,46 +165,118 @@ def helm() -> str:
     return path
 
 
+def helm_releases(kubeconfig: str, ns: str) -> list[dict]:
+    """What helm already has in this namespace, so an existing install can be adopted."""
+    env = tool_env()
+    env["KUBECONFIG"] = kubeconfig
+    try:
+        proc = subprocess.run([helm(), "list", "-n", ns, "-o", "json"], capture_output=True,
+                              text=True, timeout=60, env=env)
+    except (ClusterError, OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    try:
+        rows = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [{"name": r.get("name", ""), "chart": r.get("chart", ""),
+             "app_version": r.get("app_version", ""), "status": r.get("status", ""),
+             "updated": (r.get("updated") or "")[:19],
+             "is_driver": "csi-isilon" in (r.get("chart") or "")} for r in rows]
+
+
+def helm_values(kubeconfig: str, release: str, ns: str) -> dict:
+    """The values a release was installed with, as helm reports them."""
+    env = tool_env()
+    env["KUBECONFIG"] = kubeconfig
+    try:
+        proc = subprocess.run([helm(), "get", "values", release, "-n", ns, "-o", "json"],
+                              capture_output=True, text=True, timeout=60, env=env)
+        return json.loads(proc.stdout or "{}") if proc.returncode == 0 else {}
+    except (ClusterError, OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return {}
+
+
 def helm_install_driver(job: Job, kubeconfig: str, ns: str, opts: dict,
                         arrays: list[dict], upgrade: bool = False,
-                        default_array_id: str | None = None) -> None:
+                        default_array_id: str | None = None,
+                        release: str = DRIVER_RELEASE, reuse_values: bool = False,
+                        manage_secret: bool = True) -> None:
+    """Install the driver, or adopt one that is already here.
+
+    An installation this console did not create carries values and a credentials
+    secret someone chose deliberately. reuse_values keeps helm's own stored values
+    and changes only the switches that have to change; manage_secret=False leaves
+    isilon-creds exactly as it is. Together they make it safe to enable replication
+    on a driver that is already serving volumes.
+    """
     if not DRIVER_CHART.exists():
         raise ClusterError(f"the csi-isilon chart is missing at {DRIVER_CHART}")
+    existing = {r["name"]: r for r in helm_releases(kubeconfig, ns)}
+    clashing = [r for name, r in existing.items() if r["is_driver"] and name != release]
+    if clashing and not upgrade:
+        names = ", ".join(r["name"] for r in clashing)
+        raise ClusterError(
+            f"{ns} already has the driver installed by helm as {names}. A second release "
+            "of the same driver fights the first over the CSIDriver object and the node "
+            "plugin socket, which are one per cluster. Install under that release name to "
+            "adopt it, or remove it first.")
+    if reuse_values and release not in existing:
+        raise ClusterError(
+            f"there is no helm release called {release} in {ns} to keep the values of. "
+            "Clear that option to install fresh.")
     ensure_namespace(job, kubeconfig, ns)
-    create_array_secret(job, kubeconfig, ns, arrays, default_array_id)
+    if manage_secret:
+        create_array_secret(job, kubeconfig, ns, arrays, default_array_id)
+    else:
+        job.log("leaving the existing isilon-creds secret alone, as asked")
     if opts.get("replication"):
         install_replication_crds(job, kubeconfig)
     if opts.get("snapshots", True) and not snapshot_crds_present(kubeconfig):
         job.log("warning: volume snapshot CRDs are missing; the snapshotter sidecar needs them")
 
-    vf = values_file(opts)
-    job.log(f"values written to {vf}")
-    job.log(yaml.safe_dump({k: v for k, v in build_values(opts).items()
-                            if k in ("isiAuthType", "isiAccessZone", "isiPath", "enableQuota",
-                                     "endpointPort", "skipCertificateValidation")},
-                           sort_keys=False))
     env = tool_env()
     env["KUBECONFIG"] = kubeconfig
-    cmd = [helm(), "upgrade" if upgrade else "install", DRIVER_RELEASE, str(DRIVER_CHART),
-           "-n", ns, "-f", str(vf), "--wait", "--timeout", "10m"]
-    if upgrade:
-        cmd.insert(2, "--install")
-    if opts.get("openshift", True):
-        cmd += ["--set", "openshift=true"]
+    vf = None
+    if reuse_values:
+        # keep everything this release already has and change only what must change
+        job.log(f"keeping the values release {release} already has; changing only the "
+                "replication switch")
+        cmd = [helm(), "upgrade", release, str(DRIVER_CHART), "-n", ns, "--reuse-values",
+               "--wait", "--timeout", "10m",
+               "--set", f"controller.replication.enabled={str(bool(opts.get('replication'))).lower()}"]
+    else:
+        vf = values_file(opts)
+        kept = manifests.save(vf.read_text(), f"helm values for {release}", job=job.id,
+                              cluster=job.cluster or "")
+        job.log(f"values written to {vf}" + (f", kept at {kept}" if kept else ""))
+        job.log(yaml.safe_dump({k: v for k, v in build_values(opts).items()
+                                if k in ("isiAuthType", "isiAccessZone", "isiPath", "enableQuota",
+                                         "endpointPort", "skipCertificateValidation")},
+                               sort_keys=False))
+        cmd = [helm(), "upgrade" if upgrade else "install", release, str(DRIVER_CHART),
+               "-n", ns, "-f", str(vf), "--wait", "--timeout", "10m"]
+        if upgrade:
+            cmd.insert(2, "--install")
+        if opts.get("openshift", True):
+            cmd += ["--set", "openshift=true"]
     rc = job.run(cmd, env=env)
-    try:
-        vf.unlink()
-    except OSError:
-        pass
+    if vf:
+        try:
+            vf.unlink()
+        except OSError:
+            pass
     if rc != 0:
         raise ClusterError(f"helm exited {rc}")
     job.log("driver installed")
 
 
-def helm_uninstall_driver(job: Job, kubeconfig: str, ns: str) -> None:
+def helm_uninstall_driver(job: Job, kubeconfig: str, ns: str,
+                          release: str = DRIVER_RELEASE) -> None:
     env = tool_env()
     env["KUBECONFIG"] = kubeconfig
-    rc = job.run([helm(), "uninstall", DRIVER_RELEASE, "-n", ns], env=env)
+    rc = job.run([helm(), "uninstall", release, "-n", ns], env=env)
     if rc != 0:
         raise ClusterError(f"helm uninstall exited {rc}")
 

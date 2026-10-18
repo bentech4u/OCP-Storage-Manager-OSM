@@ -652,6 +652,23 @@ def act(job: Job, rg: str, action: str, target_cluster: str | None = None,
 
     args = build_args(rg, action, target_cluster, unplanned, discard)
     job.log("repctl " + " ".join(args))
+    try:
+        from . import manifests
+        wanted = EXPECTED_ANNOTATION.get(action, ("",))[1 if unplanned and action == "failover"
+                                                       else 0]
+        kept = manifests.save(
+            "# the same action as a patch, for a cluster without this console:\n"
+            f"#   oc patch dellcsireplicationgroup {rg} --type merge \\\n"
+            f"#     -p '{{\"spec\":{{\"action\":\"{wanted}\"}}}}'\n"
+            + yaml.safe_dump({"apiVersion": "replication.storage.dell.com/v1",
+                              "kind": "DellCSIReplicationGroup",
+                              "metadata": {"name": rg},
+                              "spec": {"action": wanted}}, sort_keys=False),
+            f"{action} {rg}", job=job.id, cluster=target_cluster or "")
+        if kept:
+            job.log(f"the equivalent patch was written to {kept}")
+    except Exception:                                   # noqa: BLE001
+        pass
     rc = run_repctl(job, args)
     if rc != 0 or not watching:
         return rc

@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import re
 import uuid
+from pathlib import Path
+
+import yaml
 from html import escape
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .. import config, store
 from ..config import DRIVER_NAMESPACE_DEFAULT, match_owner
-from ..services import audit, installer, inventory, k8s, replication, tools
-from ..services.arrays import ArrayError, OneFS
+from ..services import audit, installer, inventory, k8s, manifests, replication, tools
+from ..services.arrays import ArrayError, OneFS, secret_yaml
 from ..services.jobs import Job, start
 from ..templating import templates
 
@@ -502,6 +505,9 @@ async def install_driver(request: Request):
     ns = form.get("namespace") or cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
     kc = cluster["kubeconfig"]
     upgrade = form.get("upgrade") == "on"
+    release = (form.get("release") or "").strip() or "isilon"
+    reuse_values = form.get("reuse_values") == "on"
+    manage_secret = form.get("keep_secret") != "on"
     # Every cluster's secret lists every array: the driver resolves the remote end of a
     # SyncIQ pair from its own config, so both ends must be present on both sites.
     default_array = form.get("default_array") or (arrays[0]["id"] if arrays else "")
@@ -514,8 +520,18 @@ async def install_driver(request: Request):
     def work(job: Job):
         job.log(f"cluster {cid} ({cluster.get('server','')}), namespace {ns}, method {method}")
         job.log("mode: " + ("replication" if opts["replication"] else "standalone"))
-        job.log(f"secret isilon-creds will list: {', '.join(a['name'] for a in arrays)} "
-                f"(default {default_array})")
+        if manage_secret:
+            job.log(f"secret isilon-creds will list: {', '.join(a['name'] for a in arrays)} "
+                    f"(default {default_array})")
+        else:
+            job.log("the existing isilon-creds secret will not be touched")
+        if method == "helm":
+            found = installer.helm_releases(kc, ns)
+            job.log("helm already has in this namespace: " + (", ".join(
+                f"{r['name']} ({r['chart']}, {r['status']})" for r in found) or "nothing"))
+            if reuse_values:
+                kept = installer.helm_values(kc, release, ns)
+                job.log(f"keeping the {len(kept)} value(s) release {release} was installed with")
         for w in dict.fromkeys(installer.support_warnings(
                 cluster.get("openshift_version", ""),
                 [a.get("onefs_version", "") for a in arrays])):
@@ -534,11 +550,16 @@ async def install_driver(request: Request):
             installer.operator_apply_cr(job, kc, ns, opts, arrays, default_array)
         else:
             installer.helm_install_driver(job, kc, ns, opts, arrays, upgrade=upgrade,
-                                          default_array_id=default_array)
+                                          default_array_id=default_array, release=release,
+                                          reuse_values=reuse_values,
+                                          manage_secret=manage_secret)
         store.update(lambda s: s["installs"].update({cid: {
             "method": method, "namespace": ns, "mode": "replication" if opts["replication"] else "standalone",
             "when": store.now(), "arrays": [a["id"] for a in arrays],
             "default_array": default_array,
+            # remembered so an uninstall can never reach for the wrong release
+            "release": release if method == "helm" else "",
+            "adopted": reuse_values or not manage_secret,
         }}))
         inventory.invalidate()
 
@@ -578,14 +599,68 @@ def uninstall_driver(request: Request, cluster_id: str = Form(...), force: str =
                 'Move or delete them first, or run the uninstall again with the override.'
                 '</div></div>')
 
+    release = (state["installs"].get(cluster_id, {}) or {}).get("release") or "isilon"
+
     def work(job: Job):
-        installer.helm_uninstall_driver(job, cluster["kubeconfig"], ns)
+        job.log(f"uninstalling the helm release {release} from {ns}")
+        installer.helm_uninstall_driver(job, cluster["kubeconfig"], ns, release=release)
         inventory.invalidate()
 
     job = start(f"Uninstall driver on {cluster_id}", "driver", work, cluster=cluster_id, actor=getattr(request.state, "user", ""),
                  via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
+
+
+# --- the yaml behind each operation ---------------------------------------------
+@router.get("/install/manifests", response_class=HTMLResponse)
+def manifest_list(request: Request):
+    """Everything the console has applied, newest first."""
+    return templates.TemplateResponse(request, "partials/manifests.html",
+                                      {"rows": manifests.recent(60)})
+
+
+@router.get("/install/manifests/{name}", response_class=PlainTextResponse)
+def manifest_file(request: Request, name: str, download: int = 0):
+    try:
+        body = manifests.read(name)
+    except (FileNotFoundError, OSError):
+        return PlainTextResponse("no such manifest", status_code=404)
+    headers = {"Content-Disposition": f'attachment; filename="{Path(name).name}"'} \
+        if download else {}
+    return PlainTextResponse(body, media_type="text/yaml", headers=headers)
+
+
+@router.get("/install/manifests-preview/{what}", response_class=PlainTextResponse)
+def manifest_preview(request: Request, what: str, cluster: str = "", reveal: int = 0):
+    """Build a manifest from the current state without applying anything.
+
+    The stored copies have their secret values stripped. An administrator can ask for
+    one with the real values here, which is what you would commit to a vault or hand
+    to someone applying it by hand.
+    """
+    state = store.load()
+    arrays = list(state["arrays"].values())
+    if what == "secret":
+        if not arrays:
+            return PlainTextResponse("register an array first", status_code=400)
+        if getattr(request.state, "role", "admin") == "viewer":
+            return PlainTextResponse("this one carries credentials; ask an administrator",
+                                     status_code=403)
+        ns = (state["clusters"].get(cluster) or {}).get("namespace", DRIVER_NAMESPACE_DEFAULT)
+        import base64
+        payload = secret_yaml(arrays)
+        body = yaml.safe_dump({
+            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {"name": "isilon-creds", "namespace": ns},
+            "data": {"config": base64.b64encode(payload.encode()).decode()},
+        }, sort_keys=False)
+        if not reveal:
+            body = manifests.redact(body)[0]
+        return PlainTextResponse("# isilon-creds as the console would write it today\n"
+                                 + ("# values hidden; add ?reveal=1 for the real one\n"
+                                    if not reveal else "") + body, media_type="text/yaml")
+    return PlainTextResponse(f"nothing to preview for {what!r}", status_code=400)
 
 
 # --- storage classes -----------------------------------------------------------

@@ -1,0 +1,23 @@
+{# What the console has applied, newest first. #}
+{% if rows %}
+<table>
+  <thead><tr><th>When</th><th>What</th><th>Cluster</th><th></th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="small nowrap mono">{{ r.when }}</td>
+      <td class="small">{{ r.what }}</td>
+      <td class="small muted">{{ r.cluster or "-" }}</td>
+      <td class="small nowrap">
+        <a class="btn sm" href="/install/manifests/{{ r.name }}" target="_blank">View</a>
+        <a class="btn sm" href="/install/manifests/{{ r.name }}?download=1">Download</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<div class="small muted" style="padding:.6rem 1rem">Secret values are not written to these
+  files. For a usable isilon-creds, use the preview on this page.</div>
+{% else %}
+<div class="empty">Nothing applied yet. Every secret, storage class, operator resource and
+  replication action the console applies is written here as YAML.</div>
+{% endif %}

@@ -323,6 +323,28 @@
         <label for="ocp">OpenShift cluster, add the security context constraints</label></div>
       <div class="check"><input type="checkbox" id="upg" name="upgrade">
         <label for="upg">Upgrade if the release already exists</label></div>
+
+      <details class="fold">
+        <summary><span class="chev">&#9656;</span> A driver is already installed here
+          <span class="muted small">adopt it instead of installing beside it</span></summary>
+        <p class="small muted" style="margin:.2rem 0 .7rem">
+          A second release of the same driver fights the first one: the CSIDriver object and
+          the node plugin socket are one per cluster, not one per namespace. To turn
+          replication on for an install this console did not create, give its release name
+          and keep what it already has.</p>
+        <div class="row three">
+          <div class="field"><label>Helm release name</label>
+            <input type="text" name="release" value="isilon" autocomplete="off">
+            <div class="hint">what <span class="mono">helm list -n &lt;namespace&gt;</span> calls it</div></div>
+          <div class="field" style="grid-column:span 2">
+            <div class="check"><input type="checkbox" id="reuse" name="reuse_values">
+              <label for="reuse">Keep the values this release already has, change only the
+                replication switch</label></div>
+            <div class="check"><input type="checkbox" id="keepsec" name="keep_secret">
+              <label for="keepsec">Leave the existing isilon-creds secret alone</label></div>
+          </div>
+        </div>
+      </details>
       <div class="btn-row" style="margin-top:.8rem">
         <button class="btn primary">Install driver</button>
         <button class="btn danger" hx-post="/install/driver/uninstall" hx-target="#output"
@@ -400,6 +422,24 @@
 </section>
 
 <!-- 6. replication wiring -->
+<!-- the yaml behind every operation -->
+<section class="section" id="manifests">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0">
+      <div><h2>Generated YAML</h2>
+        <div class="sub">every secret, storage class, operator resource and replication
+          action this console applies, written down as it goes</div></div>
+      <div class="btn-row" style="margin:0">
+        <a class="btn sm" href="/install/manifests-preview/secret" target="_blank">Preview
+          isilon-creds</a>
+        <button class="btn sm" hx-get="/install/manifests" hx-target="#manifest-list">Refresh</button>
+      </div>
+    </div>
+    <div id="manifest-list" hx-get="/install/manifests" hx-trigger="load"
+         data-refresh-on-job="1"></div>
+  </div>
+</section>
+
 <section class="section" id="replication">
   <div class="card">
     <div class="card-head"><div><h2>6. Wire the two clusters together</h2>
