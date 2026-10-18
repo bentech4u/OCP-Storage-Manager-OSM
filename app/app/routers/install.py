@@ -664,6 +664,248 @@ def manifest_preview(request: Request, what: str, cluster: str = "", reveal: int
 
 
 # --- storage classes -----------------------------------------------------------
+def _storage_class_plan(form: dict) -> tuple[list[tuple[str, dict]], str]:
+    """The manifests a storage class request would apply, and why it cannot.
+
+    Returns [(cluster id, manifest)] for one or both sides, or an explanation.
+    """
+    state = store.load()
+    src = state["clusters"].get(form.get("source_cluster", ""))
+    array = state["arrays"].get(form.get("array", ""))
+    if not src or not array:
+        return [], "Pick a cluster and an array."
+    replicated = form.get("replicated") == "on"
+    name = form.get("name") or ("isilon-replicated" if replicated else "isilon")
+    opts = {
+        "access_zone": form.get("access_zone", array.get("access_zone", "System")),
+        "isi_path": form.get("isi_path", array.get("isi_path", "/ifs/data/csi")),
+        "az_service_ip": form.get("az_service_ip") or array["endpoint"],
+        "root_client_enabled": form.get("root_client_enabled") == "on",
+        "reclaim_policy": form.get("reclaim_policy", "Delete"),
+        "binding_mode": form.get("binding_mode", "Immediate"),
+    }
+    if not replicated:
+        return [(src["id"], installer.storage_class_manifest(name, array, opts))], ""
+
+    tgt = state["clusters"].get(form.get("target_cluster", ""))
+    tgt_array = state["arrays"].get(form.get("target_array", ""))
+    if not tgt or not tgt_array:
+        return [], "Replicated classes need a target cluster and array."
+    if tgt["id"] == src["id"]:
+        return [], ("The target cluster is the source cluster. A replicated pair needs the "
+                    "other site, because its id becomes remoteClusterID.")
+    if tgt_array["id"] == array["id"]:
+        return [], (f"The target array is {array['name']}, the same array the source class "
+                    "uses. A replicated pair copies to the array at the other site, so this "
+                    "has to be the remote one; remoteSystem would otherwise point back here.")
+    rpo = form.get("rpo", "Five_Minutes")
+    prefix = (form.get("volume_group_prefix") or "csi-prod").strip()
+    if rpo not in installer.RPO_VALUES:
+        return [], f"{rpo} is not a recovery point the driver accepts."
+    if len(prefix) > 20 or not prefix.replace("-", "").isalnum():
+        return [], ("The volume group prefix must be letters, digits and dashes, at most 20 "
+                    "characters.")
+    src_rep = {
+        "remote_storage_class": name, "remote_cluster_id": tgt["id"],
+        "remote_system": tgt_array["name"],
+        "remote_az_service_ip": form.get("target_az_service_ip") or tgt_array["endpoint"],
+        "rpo": rpo, "ignore_namespaces": form.get("ignore_namespaces") == "on",
+        "volume_group_prefix": prefix,
+        "remote_access_zone": tgt_array.get("access_zone", "System"),
+    }
+    tgt_rep = dict(src_rep)
+    tgt_rep.update({"remote_cluster_id": src["id"], "remote_system": array["name"],
+                    "remote_az_service_ip": opts["az_service_ip"],
+                    "remote_access_zone": array.get("access_zone", "System")})
+    tgt_opts = dict(opts)
+    tgt_opts["az_service_ip"] = form.get("target_az_service_ip") or tgt_array["endpoint"]
+    return [(src["id"], installer.storage_class_manifest(name, array, opts, src_rep)),
+            (tgt["id"], installer.storage_class_manifest(name, tgt_array, tgt_opts, tgt_rep))], ""
+
+
+@router.post("/install/storageclass/preview", response_class=HTMLResponse)
+async def preview_storage_class(request: Request):
+    """The exact YAML the Create button would apply, without applying it."""
+    form = dict(await request.form())
+    try:
+        plan, problem = _storage_class_plan(form)
+    except k8s.ClusterError as exc:
+        plan, problem = [], str(exc)
+    if problem:
+        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{escape(problem)}'
+                            '</div></div>')
+    blocks = []
+    for cid, manifest in plan:
+        blocks.append(f"# on cluster {cid}\n" + yaml.safe_dump(manifest, sort_keys=False))
+    body = escape("\n---\n".join(blocks))
+    where = " and ".join(cid for cid, _ in plan)
+    return HTMLResponse(
+        '<div class="card"><div class="card-head"><div><h2>Storage class YAML</h2>'
+        f'<div class="sub">nothing has been applied; this is what Create would send to '
+        f'{escape(where)}</div></div></div>'
+        f'<pre class="console" style="max-height:28rem">{body}</pre></div>')
+
+
+@router.post("/install/storageclass", response_class=HTMLResponse)
+async def create_storage_class(request: Request):
+    form = dict(await request.form())
+    try:
+        plan, problem = _storage_class_plan(form)
+    except k8s.ClusterError as exc:
+        plan, problem = [], str(exc)
+    if problem:
+        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{escape(problem)}'
+                            '</div></div>')
+    state = store.load()
+    name = plan[0][1]["metadata"]["name"]
+    first = plan[0][0]
+
+    def work(job: Job):
+        for cid, manifest in plan:
+            job.log(f"creating storage class {name} on {cid}")
+            installer.apply_storage_class(job, state["clusters"][cid]["kubeconfig"], manifest)
+        inventory.invalidate()
+
+    job = start(f"Storage class {name}", "storageclass", work, cluster=first,
+                actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+@router.get("/install/manifests", response_class=HTMLResponse)
+def manifest_list(request: Request):
+    """Everything the console has applied, newest first."""
+    return templates.TemplateResponse(request, "partials/manifests.html",
+                                      {"rows": manifests.recent(60)})
+
+
+@router.get("/install/manifests/{name}", response_class=PlainTextResponse)
+def manifest_file(request: Request, name: str, download: int = 0):
+    try:
+        body = manifests.read(name)
+    except (FileNotFoundError, OSError):
+        return PlainTextResponse("no such manifest", status_code=404)
+    headers = {"Content-Disposition": f'attachment; filename="{Path(name).name}"'} \
+        if download else {}
+    return PlainTextResponse(body, media_type="text/yaml", headers=headers)
+
+
+@router.get("/install/manifests-preview/{what}", response_class=PlainTextResponse)
+def manifest_preview(request: Request, what: str, cluster: str = "", reveal: int = 0):
+    """Build a manifest from the current state without applying anything.
+
+    The stored copies have their secret values stripped. An administrator can ask for
+    one with the real values here, which is what you would commit to a vault or hand
+    to someone applying it by hand.
+    """
+    state = store.load()
+    arrays = list(state["arrays"].values())
+    if what == "secret":
+        if not arrays:
+            return PlainTextResponse("register an array first", status_code=400)
+        if getattr(request.state, "role", "admin") == "viewer":
+            return PlainTextResponse("this one carries credentials; ask an administrator",
+                                     status_code=403)
+        ns = (state["clusters"].get(cluster) or {}).get("namespace", DRIVER_NAMESPACE_DEFAULT)
+        import base64
+        payload = secret_yaml(arrays)
+        body = yaml.safe_dump({
+            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {"name": "isilon-creds", "namespace": ns},
+            "data": {"config": base64.b64encode(payload.encode()).decode()},
+        }, sort_keys=False)
+        if not reveal:
+            body = manifests.redact(body)[0]
+        return PlainTextResponse("# isilon-creds as the console would write it today\n"
+                                 + ("# values hidden; add ?reveal=1 for the real one\n"
+                                    if not reveal else "") + body, media_type="text/yaml")
+    return PlainTextResponse(f"nothing to preview for {what!r}", status_code=400)
+
+
+# --- storage classes -----------------------------------------------------------
+def _storage_class_plan(form: dict) -> tuple[list[tuple[str, dict]], str]:
+    """The manifests a storage class request would apply, and why it cannot.
+
+    Returns [(cluster id, manifest)] for one or both sides, or an explanation.
+    """
+    state = store.load()
+    src = state["clusters"].get(form.get("source_cluster", ""))
+    array = state["arrays"].get(form.get("array", ""))
+    if not src or not array:
+        return [], "Pick a cluster and an array."
+    replicated = form.get("replicated") == "on"
+    name = form.get("name") or ("isilon-replicated" if replicated else "isilon")
+    opts = {
+        "access_zone": form.get("access_zone", array.get("access_zone", "System")),
+        "isi_path": form.get("isi_path", array.get("isi_path", "/ifs/data/csi")),
+        "az_service_ip": form.get("az_service_ip") or array["endpoint"],
+        "root_client_enabled": form.get("root_client_enabled") == "on",
+        "reclaim_policy": form.get("reclaim_policy", "Delete"),
+        "binding_mode": form.get("binding_mode", "Immediate"),
+    }
+    if not replicated:
+        return [(src["id"], installer.storage_class_manifest(name, array, opts))], ""
+
+    tgt = state["clusters"].get(form.get("target_cluster", ""))
+    tgt_array = state["arrays"].get(form.get("target_array", ""))
+    if not tgt or not tgt_array:
+        return [], "Replicated classes need a target cluster and array."
+    if tgt["id"] == src["id"]:
+        return [], ("The target cluster is the source cluster. A replicated pair needs the "
+                    "other site, because its id becomes remoteClusterID.")
+    if tgt_array["id"] == array["id"]:
+        return [], (f"The target array is {array['name']}, the same array the source class "
+                    "uses. A replicated pair copies to the array at the other site, so this "
+                    "has to be the remote one; remoteSystem would otherwise point back here.")
+    rpo = form.get("rpo", "Five_Minutes")
+    prefix = (form.get("volume_group_prefix") or "csi-prod").strip()
+    if rpo not in installer.RPO_VALUES:
+        return [], f"{rpo} is not a recovery point the driver accepts."
+    if len(prefix) > 20 or not prefix.replace("-", "").isalnum():
+        return [], ("The volume group prefix must be letters, digits and dashes, at most 20 "
+                    "characters.")
+    src_rep = {
+        "remote_storage_class": name, "remote_cluster_id": tgt["id"],
+        "remote_system": tgt_array["name"],
+        "remote_az_service_ip": form.get("target_az_service_ip") or tgt_array["endpoint"],
+        "rpo": rpo, "ignore_namespaces": form.get("ignore_namespaces") == "on",
+        "volume_group_prefix": prefix,
+        "remote_access_zone": tgt_array.get("access_zone", "System"),
+    }
+    tgt_rep = dict(src_rep)
+    tgt_rep.update({"remote_cluster_id": src["id"], "remote_system": array["name"],
+                    "remote_az_service_ip": opts["az_service_ip"],
+                    "remote_access_zone": array.get("access_zone", "System")})
+    tgt_opts = dict(opts)
+    tgt_opts["az_service_ip"] = form.get("target_az_service_ip") or tgt_array["endpoint"]
+    return [(src["id"], installer.storage_class_manifest(name, array, opts, src_rep)),
+            (tgt["id"], installer.storage_class_manifest(name, tgt_array, tgt_opts, tgt_rep))], ""
+
+
+@router.post("/install/storageclass/preview", response_class=HTMLResponse)
+async def preview_storage_class(request: Request):
+    """The exact YAML the Create button would apply, without applying it."""
+    form = dict(await request.form())
+    try:
+        plan, problem = _storage_class_plan(form)
+    except k8s.ClusterError as exc:
+        plan, problem = [], str(exc)
+    if problem:
+        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{escape(problem)}'
+                            '</div></div>')
+    blocks = []
+    for cid, manifest in plan:
+        blocks.append(f"# on cluster {cid}\n" + yaml.safe_dump(manifest, sort_keys=False))
+    body = escape("\n---\n".join(blocks))
+    where = " and ".join(cid for cid, _ in plan)
+    return HTMLResponse(
+        '<div class="card"><div class="card-head"><div><h2>Storage class YAML</h2>'
+        f'<div class="sub">nothing has been applied; this is what Create would send to '
+        f'{escape(where)}</div></div></div>'
+        f'<pre class="console" style="max-height:28rem">{body}</pre></div>')
+
+
 @router.post("/install/storageclass", response_class=HTMLResponse)
 async def create_storage_class(request: Request):
     form = dict(await request.form())

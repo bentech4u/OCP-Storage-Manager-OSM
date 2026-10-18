@@ -368,7 +368,7 @@
             {% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}</select>
           <div class="hint">Where the class is created. For a pair, this is the source site.</div></div>
         <div class="field"><label>Array</label>
-          <select name="array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+          <select name="array" data-pair="target_array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
       </div>
       <div class="row three">
         <div class="field"><label>Access zone</label><input type="text" name="access_zone" value="System"></div>
@@ -390,7 +390,11 @@
                 {% if clusters|length > 1 and loop.last %}selected{% endif %}>{{ c.id }}</option>{% endfor %}</select>
             <div class="hint">Must differ from the cluster above; this name becomes remoteClusterID.</div></div>
           <div class="field"><label>Target array</label>
-            <select name="target_array">{% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+            <select name="target_array" data-pair="array">
+              {% for a in arrays %}<option value="{{ a.id }}"
+                {% if arrays|length > 1 and loop.index == 2 %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+            </select>
+            <div class="hint">the array at the far site; this name becomes remoteSystem</div></div>
           <div class="field"><label>Recovery point objective</label>
             <select name="rpo">
               <option>Five_Minutes</option><option>Fifteen_Minutes</option><option>Thirty_Minutes</option>
@@ -416,7 +420,11 @@
               this class into a single group, so they all fail over together.</div></div>
         </div>
       </fieldset>
-      <button class="btn primary">Create storage class</button>
+      <div class="btn-row" style="margin-top:.8rem">
+        <button class="btn primary">Create storage class</button>
+        <button type="button" class="btn" hx-post="/install/storageclass/preview"
+                hx-include="closest form" hx-target="#output">Preview YAML</button>
+      </div>
     </form>
   </div>
 </section>
