@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Prechecks - {{ app_name }}{% endblock %}
+{% block crumbs %}Prechecks{% endblock %}
+{% block heading %}Is everything ready{% endblock %}
+{% block topactions %}
+<button class="btn primary sm" hx-get="/prechecks/run" hx-target="#checks" hx-swap="innerHTML">
+  <span class="spin htmx-indicator"></span> Run the checks</button>
+{% endblock %}
+{% block content %}
+<div class="card" style="margin-bottom:1rem">
+  <p class="small muted" style="margin:0">
+    These are the things that fail quietly. A SyncIQ policy appears on the source array
+    and nothing appears in Kubernetes, because the far side refused the connection: an
+    expired certificate, a licence that lapsed, a service switched off, a peer that was
+    never imported. Nothing here changes anything; every check only reads.</p>
+</div>
+<div id="checks">
+  <div class="empty">Press <strong>Run the checks</strong>. It takes a few seconds for each
+    array and cluster.</div>
+</div>
+{% endblock %}

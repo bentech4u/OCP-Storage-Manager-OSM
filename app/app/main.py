@@ -11,7 +11,8 @@ import urllib.parse
 
 from . import security, store
 from .config import APP_NAME, APP_TAGLINE, ensure_dirs
-from .routers import api, audit as audit_router, home as home_router, install, operations, setup
+from .routers import (api, audit as audit_router, home as home_router, install,
+                      operations, prechecks as prechecks_router, setup)
 from .services import audit, monitor, oidc
 from .templating import templates
 
@@ -239,6 +240,7 @@ def logout(request: Request):
 
 
 app.include_router(home_router.router)      # /partials/dashboard, the Home refresh
+app.include_router(prechecks_router.router)
 app.include_router(operations.router)
 app.include_router(install.router)
 app.include_router(setup.router)

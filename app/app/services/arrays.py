@@ -323,6 +323,23 @@ class OneFS:
                     queue.append((full, level + 1))
         return sorted(set(found))
 
+    def sync_certificates(self, kind: str = "server") -> list[dict]:
+        """The SyncIQ certificates this array holds, with when they run out.
+
+        An expired certificate here is quiet: the policy is still created at the
+        source, and only the far side refuses, so nothing in Kubernetes appears.
+        """
+        st, data = self.get(f"/platform/16/sync/certificates/{kind}")
+        if st != 200:
+            return []
+        rows = data.get("certificates") or next(
+            (v for v in data.values() if isinstance(v, list)), [])
+        return [{"id": c.get("id", ""), "name": c.get("name", ""),
+                 "subject": c.get("subject", ""), "issuer": c.get("issuer", ""),
+                 "status": c.get("status", ""), "not_after": c.get("not_after") or 0,
+                 "not_before": c.get("not_before") or 0, "kind": kind}
+                for c in rows]
+
     def check_path(self, isi_path: str) -> dict:
         st, data = self.get("/namespace" + urllib.parse.quote(isi_path) + "?detail=mode,type,owner")
         return {"exists": st == 200, "detail": data if st == 200 else {}, "status": st}
@@ -381,6 +398,56 @@ class OneFS:
             "bytes": r.get("total_bytes"), "errors": r.get("errors") or [],
             "encrypted": r.get("encrypted"),
         } for r in data.get("reports", [])]
+
+
+def endpoint_certificate(address: str, port: int = 8080, timeout: int = 8) -> dict:
+    """When the certificate the management API presents runs out.
+
+    Read straight off the connection, without verifying it: an expired certificate
+    still serves, and the point is to say so before something else trips over it.
+    """
+    import datetime
+    import os
+    import socket
+    import tempfile
+    host = address.replace("https://", "").replace("http://", "").strip("/").split(":")[0]
+    out = {"host": host, "known": False, "not_after": 0, "days": None, "subject": "",
+           "error": ""}
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=host) as tls:
+                pem = ssl.DER_cert_to_PEM_cert(tls.getpeercert(binary_form=True))
+    except Exception as exc:                                # noqa: BLE001
+        out["error"] = str(exc)[:160]
+        return out
+    handle, path = tempfile.mkstemp(suffix=".pem")
+    try:
+        os.write(handle, pem.encode())
+        os.close(handle)
+        info = ssl._ssl._test_decode_cert(path)             # noqa: SLF001
+    except Exception as exc:                                # noqa: BLE001
+        out["error"] = str(exc)[:160]
+        return out
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    try:
+        when = datetime.datetime.strptime(info.get("notAfter", ""), "%b %d %H:%M:%S %Y %Z")
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        out["error"] = "the certificate date could not be read"
+        return out
+    out["known"] = True
+    out["not_after"] = int(when.timestamp())
+    out["days"] = (when - datetime.datetime.now(datetime.timezone.utc)).days
+    subject = info.get("subject", ())
+    out["subject"] = ", ".join(f"{k}={v}" for part in subject for k, v in part)
+    return out
 
 
 def resolve_all(endpoint: str) -> list[str]:

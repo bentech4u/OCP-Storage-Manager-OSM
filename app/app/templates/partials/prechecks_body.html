@@ -1,0 +1,36 @@
+{% set counts = result.counts %}
+<div class="banner {{ 'ok' if result.ok and not counts.warn else ('warn' if result.ok else 'bad') }}">
+  <span>{{ "✓" if result.ok and not counts.warn else ("!" if result.ok else "⚠") }}</span>
+  <div><strong>{{ counts.pass }} passed, {{ counts.warn }} warning{{ "" if counts.warn == 1 else "s" }},
+    {{ counts.fail }} failed.</strong>
+    <div class="small muted">{{ result.total }} checks at {{ result.ran }} UTC.
+      {% if not result.ok %}A failure stops replication working; fix those first.
+      {% elif counts.warn %}Nothing is broken, but the warnings will become failures.
+      {% else %}Nothing to do.{% endif %}</div></div>
+</div>
+
+{% for group, rows in result.groups.items() %}
+<div class="card pad-0" style="margin-top:1rem">
+  <div class="card-head" style="padding:.9rem 1.1rem 0">
+    <h2>{{ group }}</h2>
+    <span class="sub">
+      {{ rows | selectattr("level", "equalto", "fail") | list | length }} failed,
+      {{ rows | selectattr("level", "equalto", "warn") | list | length }} to watch</span>
+  </div>
+  <table>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td style="width:6rem">
+          {% if r.level == "pass" %}<span class="pill ok">pass</span>
+          {% elif r.level == "warn" %}<span class="pill warn">watch</span>
+          {% else %}<span class="pill bad">fail</span>{% endif %}</td>
+        <td class="small"><strong>{{ r.what }}</strong></td>
+        <td class="small">{{ r.detail }}
+          {% if r.level != "pass" and r.fix %}<div class="muted">{{ r.fix }}</div>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}

@@ -803,6 +803,25 @@ def cmd_update(args) -> None:
             print(f"restart it by hand: systemctl restart ocpstorage-console ({exc})")
 
 
+def cmd_prechecks(args) -> None:
+    from app.services import prechecks
+    result = prechecks.run_all()
+    for group, rows in result["groups"].items():
+        if args.failed_only and not any(r["level"] != "pass" for r in rows):
+            continue
+        print(f"\n{group}")
+        for r in rows:
+            if args.failed_only and r["level"] == "pass":
+                continue
+            mark = {"pass": "ok  ", "warn": "WATCH", "fail": "FAIL"}[r["level"]]
+            print(f"  {mark} {r['what'][:46]:48} {r['detail'][:70]}")
+            if r["level"] != "pass" and r["fix"]:
+                print(f"       fix: {r['fix'][:100]}")
+    c = result["counts"]
+    print(f"\n{c['pass']} passed, {c['warn']} to watch, {c['fail']} failed")
+    raise SystemExit(1 if c["fail"] else 0)
+
+
 def cmd_doctor(args) -> None:
     checks = maintenance.doctor()
     area = None
@@ -1048,6 +1067,10 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--file", help="a particular backup (default: the newest)")
     rb.add_argument("--yes", action="store_true")
     rb.set_defaults(func=cmd_update)
+
+    pc = sub.add_parser("prechecks", help="is the environment ready to provision and replicate")
+    pc.add_argument("--failed-only", action="store_true", help="hide what already passes")
+    pc.set_defaults(func=cmd_prechecks)
 
     sub.add_parser("doctor", help="check tools, paths, permissions, clusters and arrays").set_defaults(
         func=cmd_doctor)
