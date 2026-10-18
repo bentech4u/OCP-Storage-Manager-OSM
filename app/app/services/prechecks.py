@@ -19,6 +19,13 @@ from .k8s import ClusterError, run, run_json
 
 CERT_WARN_DAYS = 45
 
+# What has to be open, and from where. SyncIQ on OneFS 9.x makes its encrypted
+# connection on 2098; 3148 is the older unencrypted path and is not required here.
+PAPI_PORT = 8080
+NFS_PORT = 2049
+SYNCIQ_PORT = 2098
+API_PORT = 6443
+
 
 def _check(group: str, what: str, level: str, detail: str, fix: str = "",
            where: str = "") -> dict:
@@ -266,6 +273,176 @@ def pair_checks(clusters: list[dict]) -> list[dict]:
     return out
 
 
+# --- the network between all of it ------------------------------------------------
+def _reachable(host: str, port: int, timeout: float = 4.0) -> tuple[bool, str]:
+    """A plain TCP connection from this host."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True, f"{host}:{port} open"
+    except OSError as exc:
+        return False, f"{host}:{port} {exc.strerror or exc}"
+
+
+def _host_of(url: str) -> tuple[str, int]:
+    from urllib.parse import urlparse
+    parsed = urlparse(url if "//" in url else "https://" + url)
+    return parsed.hostname or "", parsed.port or API_PORT
+
+
+def _reachable_from_pod(kubeconfig: str, namespace: str, pod: str, container: str,
+                        host: str, port: int) -> tuple[bool | None, str]:
+    """Open a TCP connection from inside the cluster, in a container already running.
+
+    Nothing is created: this is the driver's own pod being asked to open a socket,
+    which is the same path the driver itself takes.
+    """
+    script = (f'timeout 4 bash -c "</dev/tcp/{host}/{port}" >/dev/null 2>&1 '
+              f'&& echo OPEN || echo CLOSED')
+    proc = run(kubeconfig, ["-n", namespace, "exec", pod, "-c", container, "--",
+                            "bash", "-c", script], timeout=40)
+    text = (proc.stdout or "") + (proc.stderr or "")
+    if "OPEN" in text:
+        return True, f"{host}:{port} open"
+    if "CLOSED" in text:
+        return False, f"{host}:{port} refused or filtered"
+    return None, (text.strip()[:140] or "the test could not be run in this pod")
+
+
+def _driver_pods(kubeconfig: str, namespace: str) -> dict:
+    """One controller pod and one node pod, whichever are running."""
+    out = {"controller": "", "node": ""}
+    try:
+        items = run_json(kubeconfig, ["-n", namespace, "get", "pods"], timeout=40).get("items", [])
+    except ClusterError:
+        return out
+    for pod in items:
+        name = pod["metadata"]["name"]
+        if pod.get("status", {}).get("phase") != "Running":
+            continue
+        if "-controller-" in name and not out["controller"]:
+            out["controller"] = name
+        if "-node-" in name and not out["node"]:
+            out["node"] = name
+    return out
+
+
+def console_check() -> list[dict]:
+    """The console's own address, which is what everyone else has to reach."""
+    from .release import _endpoint                      # reads the unit, imports nothing heavy
+    port, tls = _endpoint()
+    ok, detail = _reachable("127.0.0.1", port)
+    scheme = "https" if tls else "http"
+    return [_check("network from this installer", "this console's port",
+                   "pass" if ok else "fail",
+                   f"{scheme} on {port}, {detail.split(' ', 1)[-1]}",
+                   "browsers and osmctl reach the console here; open it to the operators "
+                   "who need it and no further")]
+
+
+def array_path_evidence(arrays: list[dict]) -> list[dict]:
+    """Whether the arrays have actually talked to each other.
+
+    Nothing here can open a connection from one array to the other, so the question
+    is answered with evidence instead: a policy that has run, or a target the far
+    side has recorded.
+    """
+    out: list[dict] = []
+    for array in arrays:
+        name = array.get("name", array["id"])
+        try:
+            client = client_for(array)
+            policies = client.sync_policies()
+            incoming = client.sync_target_policies()
+        except (ArrayError, Exception):                      # noqa: BLE001
+            continue
+        ran = [p for p in policies if (p.get("last_job_state") or "").lower()
+               in ("finished", "running")]
+        if ran:
+            out.append(_check("network between the arrays", f"{name} has reached its peer",
+                              "pass", f"{len(ran)} of {len(policies)} policies have run",
+                              "", name))
+        elif policies:
+            states = ", ".join(sorted({(p.get("last_job_state") or "never run")
+                                       for p in policies}))
+            out.append(_check("network between the arrays", f"{name} has reached its peer",
+                              "fail", f"{len(policies)} policies, none has run: {states}",
+                              f"the arrays connect on {SYNCIQ_PORT}; if that is shut between "
+                              "the sites the policy is created here and never runs", name))
+        elif incoming:
+            out.append(_check("network between the arrays", f"{name} receives from its peer",
+                              "pass", f"{len(incoming)} incoming policies", "", name))
+        else:
+            out.append(_check("network between the arrays", f"{name} path to its peer",
+                              "warn", "no policies yet, so there is nothing to judge it by",
+                              f"it cannot be tested from here; make sure {SYNCIQ_PORT} is "
+                              "open from each array to the other", name))
+    return out
+
+
+def network_checks(clusters: list[dict], arrays: list[dict]) -> list[dict]:
+    out: list[dict] = console_check()
+    group = "network from this installer"
+
+    for cluster in clusters:
+        host, port = _host_of(cluster.get("server", ""))
+        if not host:
+            continue
+        ok, detail = _reachable(host, port)
+        out.append(_check(group, f"{cluster['id']} API", "pass" if ok else "fail", detail,
+                          "the console and repctl both drive the cluster through this",
+                          cluster["id"]))
+    for array in arrays:
+        host = array["endpoint"]
+        ok, detail = _reachable(host, int(array.get("port", PAPI_PORT)))
+        out.append(_check(group, f"{array['name']} management API", "pass" if ok else "fail",
+                          detail, "the console reads and configures the array here",
+                          array["name"]))
+        ok, detail = _reachable(host, SYNCIQ_PORT)
+        out.append(_check(group, f"{array['name']} SyncIQ port", "pass" if ok else "warn",
+                          detail + (" (encrypted replication listens here)" if ok else ""),
+                          "the arrays connect to each other on this port; if it is shut "
+                          "between the sites, policies are created and never run",
+                          array["name"]))
+
+    # from inside each cluster: the peer cluster, and both arrays
+    for cluster in clusters:
+        cid = cluster["id"]
+        kc = cluster.get("kubeconfig", "")
+        ns = cluster.get("namespace", "isilon")
+        label = f"network from cluster {cid}"
+        pods = _driver_pods(kc, ns)
+        if not pods["controller"] and not pods["node"]:
+            out.append(_check(label, "a driver pod to test from", "warn",
+                              f"no running driver pod in {ns}",
+                              "these paths can only be tested from inside the cluster", cid))
+            continue
+        targets = []
+        for peer in clusters:
+            if peer["id"] == cid:
+                continue
+            host, port = _host_of(peer.get("server", ""))
+            if host:
+                targets.append(("controller", f"{peer['id']} API", host, port,
+                                "the replication controller talks to its peer cluster here"))
+        for array in arrays:
+            targets.append(("controller", f"{array['name']} management API",
+                            array["endpoint"], int(array.get("port", PAPI_PORT)),
+                            "the driver provisions through this"))
+            targets.append(("node", f"{array['name']} NFS", array["endpoint"], NFS_PORT,
+                            "the nodes mount volumes over this"))
+        for role, what, host, port, why in targets:
+            pod = pods.get(role) or pods.get("controller") or pods.get("node")
+            if not pod:
+                continue
+            ok, detail = _reachable_from_pod(kc, ns, pod, "driver", host, port)
+            level = "pass" if ok else ("warn" if ok is None else "fail")
+            out.append(_check(label, f"{role} to {what}", level,
+                              detail + f" (from {pod})", why, cid))
+    out.extend(array_path_evidence(arrays))
+    return out
+
+
 def run_all() -> dict:
     """Every check, arrays and clusters in parallel."""
     state = store.load()
@@ -283,6 +460,11 @@ def run_all() -> dict:
                 results.append(_check("checks", "a check did not finish", "warn",
                                       str(exc)[:200]))
     results.extend(pair_checks(clusters))
+    try:
+        results.extend(network_checks(clusters, arrays))
+    except Exception as exc:                                 # noqa: BLE001
+        results.append(_check("network", "the network checks did not finish", "warn",
+                              str(exc)[:200]))
     if not arrays:
         results.append(_check("arrays", "an array is registered", "fail", "none yet",
                               "add the arrays on Install and Configure"))
