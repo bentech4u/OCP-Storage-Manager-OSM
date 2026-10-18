@@ -813,12 +813,14 @@ def cmd_prechecks(args) -> None:
         for r in rows:
             if args.failed_only and r["level"] == "pass":
                 continue
-            mark = {"pass": "ok  ", "warn": "WATCH", "fail": "FAIL"}[r["level"]]
+            mark = {"pass": "ok   ", "warn": "WATCH", "fail": "FAIL ",
+                    "info": "found"}[r["level"]]
             print(f"  {mark} {r['what'][:46]:48} {r['detail'][:70]}")
             if r["level"] != "pass" and r["fix"]:
                 print(f"       fix: {r['fix'][:100]}")
     c = result["counts"]
-    print(f"\n{c['pass']} passed, {c['warn']} to watch, {c['fail']} failed")
+    print(f"\n{c['pass']} passed, {c['warn']} to watch, {c['fail']} failed, "
+          f"{c.get('info', 0)} noted")
     raise SystemExit(1 if c["fail"] else 0)
 
 

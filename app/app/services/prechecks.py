@@ -443,6 +443,229 @@ def network_checks(clusters: list[dict], arrays: list[dict]) -> list[dict]:
     return out
 
 
+# --- what is already installed, and whether the two sides agree -------------------
+def installed_report(cluster: dict) -> dict:
+    """Read what this cluster already runs, without changing any of it."""
+    from .installer import helm_releases
+    cid, kc = cluster["id"], cluster.get("kubeconfig", "")
+    ns = cluster.get("namespace", "isilon")
+    out: dict = {"cluster": cid, "namespace": ns, "reachable": False, "helm": [],
+                 "operator": [], "driver_version": "", "sidecars": {}, "replicator": "",
+                 "replication_controller": "", "snapshot_crds": False, "classes": [],
+                 "volumes": 0, "groups": 0, "secret_arrays": [],
+                 "openshift": cluster.get("openshift_version", "")}
+    try:
+        run_json(kc, ["version"], timeout=30)
+        out["reachable"] = True
+    except (ClusterError, Exception):                        # noqa: BLE001
+        return out
+
+    out["helm"] = [r for r in helm_releases(kc, ns)]
+    try:
+        for item in run_json(kc, ["get", "containerstoragemodule", "-A"],
+                             timeout=40).get("items", []):
+            out["operator"].append({
+                "name": item["metadata"]["name"],
+                "namespace": item["metadata"].get("namespace", ""),
+                "version": (item.get("spec") or {}).get("version", ""),
+                "state": (item.get("status") or {}).get("state", "")})
+    except ClusterError:
+        pass
+
+    try:
+        deploys = run_json(kc, ["-n", ns, "get", "deploy"], timeout=40).get("items", [])
+    except ClusterError:
+        deploys = []
+    for deploy in deploys:
+        containers = (deploy.get("spec", {}).get("template", {})
+                      .get("spec", {}).get("containers", []))
+        names = {c.get("name"): c.get("image", "") for c in containers}
+        if "driver" not in names:
+            continue
+        out["sidecars"] = names
+        out["driver_version"] = names["driver"].rsplit(":", 1)[-1]
+        out["replicator"] = names.get("dell-csi-replicator", "").rsplit(":", 1)[-1]
+        break
+
+    try:
+        for deploy in run_json(kc, ["-n", "dell-replication-controller", "get", "deploy"],
+                               timeout=30).get("items", []):
+            images = [c.get("image", "") for c in (deploy.get("spec", {}).get("template", {})
+                                                   .get("spec", {}).get("containers", []))]
+            out["replication_controller"] = next(
+                (i.rsplit(":", 1)[-1] for i in images if "replication-controller" in i), "")
+    except ClusterError:
+        pass
+
+    out["snapshot_crds"] = run(
+        kc, ["get", "crd", "volumesnapshots.snapshot.storage.k8s.io"], timeout=30
+    ).returncode == 0
+
+    try:
+        for sc in run_json(kc, ["get", "storageclass"], timeout=30).get("items", []):
+            if "isilon" not in sc.get("provisioner", ""):
+                continue
+            params = sc.get("parameters") or {}
+            out["classes"].append({
+                "name": sc["metadata"]["name"],
+                "replicated": params.get(
+                    "replication.storage.dell.com/isReplicationEnabled") == "true",
+                "remote_class": params.get(
+                    "replication.storage.dell.com/remoteStorageClassName", ""),
+                "remote_cluster": params.get(
+                    "replication.storage.dell.com/remoteClusterID", ""),
+                "remote_system": params.get(
+                    "replication.storage.dell.com/remoteSystem", ""),
+                "rpo": params.get("replication.storage.dell.com/rpo", ""),
+                "prefix": params.get("replication.storage.dell.com/volumeGroupPrefix", "")})
+    except ClusterError:
+        pass
+
+    try:
+        pvs = run_json(kc, ["get", "pv"], timeout=60).get("items", [])
+        out["volumes"] = sum(1 for pv in pvs
+                             if "isilon" in ((pv.get("spec", {}).get("csi") or {})
+                                             .get("driver", "")))
+    except ClusterError:
+        pass
+    try:
+        out["groups"] = len(run_json(kc, ["get", "dellcsireplicationgroups"],
+                                     timeout=40).get("items", []))
+    except ClusterError:
+        pass
+
+    try:
+        import base64
+        import yaml as _yaml
+        secret = run_json(kc, ["-n", ns, "get", "secret", "isilon-creds"], timeout=30)
+        body = base64.b64decode((secret.get("data") or {}).get("config", "")).decode()
+        parsed = _yaml.safe_load(body) or {}
+        out["secret_arrays"] = [c.get("clusterName", "") for c in
+                                (parsed.get("isilonClusters") or [])]
+    except (ClusterError, Exception):                        # noqa: BLE001
+        pass
+    return out
+
+
+def installed_checks(report: dict) -> list[dict]:
+    """State what is there, as facts rather than verdicts."""
+    cid = report["cluster"]
+    group = f"installed on {cid}"
+    if not report["reachable"]:
+        return []
+    rows = [
+        _check(group, "driver", "info",
+               f"csi-isilon {report['driver_version'] or 'not found'} in "
+               f"{report['namespace']}", "", cid),
+        _check(group, "installed by", "info",
+               ", ".join(f"operator ({o['version']}, {o['state']})" for o in report["operator"])
+               or ", ".join(f"helm release {h['name']} ({h['chart']})" for h in report["helm"])
+               or "neither helm nor the operator reports it", "", cid),
+        _check(group, "replication sidecar", "info",
+               report["replicator"] or "not present", "", cid),
+        _check(group, "replication controller", "info",
+               report["replication_controller"] or "not installed", "", cid),
+        _check(group, "snapshot CRDs", "info",
+               "present" if report["snapshot_crds"] else "missing", "", cid),
+        _check(group, "storage classes", "info",
+               ", ".join(f"{c['name']}{' (replicated)' if c['replicated'] else ''}"
+                         for c in report["classes"]) or "none", "", cid),
+        _check(group, "volumes and groups", "info",
+               f"{report['volumes']} volume(s), {report['groups']} replication group(s)",
+               "", cid),
+        _check(group, "arrays in isilon-creds", "info",
+               ", ".join(report["secret_arrays"]) or "could not be read", "", cid),
+    ]
+    return rows
+
+
+def recommendations(reports: list[dict], arrays: list[dict]) -> list[dict]:
+    """Where the two sides disagree, and what to do about it."""
+    from .installer import support_warnings
+    out: list[dict] = []
+    live = [r for r in reports if r["reachable"]]
+    group = "recommendations"
+
+    for report in live:
+        cid = report["cluster"]
+        if report["sidecars"].get("snapshotter") and not report["snapshot_crds"]:
+            out.append(_check(group, f"{cid}: snapshotter without its CRDs", "fail",
+                              "the snapshotter sidecar is running but the volume snapshot "
+                              "CRDs are missing",
+                              "install the snapshot CRDs, or the sidecar will crash-loop",
+                              cid))
+        names = {a["name"] for a in arrays}
+        listed = set(report["secret_arrays"])
+        if listed and len(arrays) > 1 and not names.issubset(listed):
+            out.append(_check(group, f"{cid}: isilon-creds is missing an array", "fail",
+                              "it lists " + (", ".join(sorted(listed)) or "nothing")
+                              + f"; this console knows {', '.join(sorted(names))}",
+                              "both ends of a SyncIQ pair must be in the secret on both "
+                              "clusters, because the driver resolves the remote array from "
+                              "its own config", cid))
+        for warning in dict.fromkeys(support_warnings(report["openshift"], [])):
+            out.append(_check(group, f"{cid}: outside the support matrix", "warn", warning,
+                              "it works, but Dell will say it is unsupported", cid))
+
+    if len(live) < 2:
+        return out
+
+    a, b = live[0], live[1]
+    if a["driver_version"] and b["driver_version"] and \
+            a["driver_version"] != b["driver_version"]:
+        out.append(_check(group, "the two sites run different driver versions", "warn",
+                          f"{a['cluster']} {a['driver_version']}, "
+                          f"{b['cluster']} {b['driver_version']}",
+                          "bring them level before a failover: the far side has to "
+                          "understand the group it is handed"))
+    if bool(a["replicator"]) != bool(b["replicator"]):
+        has = a if a["replicator"] else b
+        lacks = b if a["replicator"] else a
+        out.append(_check(group, "replication is enabled on one side only", "fail",
+                          f"{has['cluster']} has the sidecar, {lacks['cluster']} does not",
+                          f"enable replication on {lacks['cluster']} as well; a pair needs "
+                          "it at both ends"))
+    if bool(a["replication_controller"]) != bool(b["replication_controller"]):
+        lacks = b if a["replication_controller"] else a
+        out.append(_check(group, "the replication controller is missing on one side", "fail",
+                          f"{lacks['cluster']} is not running it",
+                          "install it there; without it the group never changes role"))
+    method_a = "operator" if a["operator"] else ("helm" if a["helm"] else "unknown")
+    method_b = "operator" if b["operator"] else ("helm" if b["helm"] else "unknown")
+    if method_a != method_b:
+        out.append(_check(group, "the two sites were installed differently", "warn",
+                          f"{a['cluster']} by {method_a}, {b['cluster']} by {method_b}",
+                          "it works, but an upgrade has to be done twice, two ways"))
+    if a["namespace"] != b["namespace"]:
+        out.append(_check(group, "the driver lives in different namespaces", "warn",
+                          f"{a['cluster']} {a['namespace']}, {b['cluster']} {b['namespace']}",
+                          "allowed, but keep it in mind when reading either side"))
+
+    # a replicated class has to have its partner at the far end, by name
+    for here, there in ((a, b), (b, a)):
+        far_names = {c["name"] for c in there["classes"]}
+        for sc in here["classes"]:
+            if not sc["replicated"]:
+                continue
+            wanted = sc["remote_class"] or sc["name"]
+            if wanted not in far_names:
+                out.append(_check(
+                    group, f"{here['cluster']}: class {sc['name']} has no partner", "fail",
+                    f"it names {wanted} on {sc['remote_cluster'] or there['cluster']}, "
+                    "which has no such class",
+                    "create the matching class at the far site, or the first failover has "
+                    "nothing to bind to", here["cluster"]))
+            elif sc["remote_cluster"] != there["cluster"]:
+                out.append(_check(
+                    group, f"{here['cluster']}: class {sc['name']} points elsewhere", "warn",
+                    f"remoteClusterID is {sc['remote_cluster'] or 'unset'}, and the other "
+                    f"registered cluster is {there['cluster']}", "", here["cluster"]))
+    if not out:
+        out.append(_check(group, "the two sites agree", "pass",
+                          "same driver version, replication at both ends, classes paired"))
+    return out
+
+
 def run_all() -> dict:
     """Every check, arrays and clusters in parallel."""
     state = store.load()
@@ -459,6 +682,12 @@ def run_all() -> dict:
             except Exception as exc:                         # noqa: BLE001
                 results.append(_check("checks", "a check did not finish", "warn",
                                       str(exc)[:200]))
+    reports = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for report in pool.map(installed_report, clusters):
+            reports.append(report)
+            results.extend(installed_checks(report))
+    results.extend(recommendations(reports, arrays))
     results.extend(pair_checks(clusters))
     try:
         results.extend(network_checks(clusters, arrays))
@@ -472,7 +701,7 @@ def run_all() -> dict:
     for row in results:
         groups.setdefault(row["group"], []).append(row)
     counts = {level: sum(1 for r in results if r["level"] == level)
-              for level in ("pass", "warn", "fail")}
+              for level in ("pass", "warn", "fail", "info")}
     return {"groups": groups, "counts": counts, "total": len(results),
             "ran": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
             "ok": counts["fail"] == 0}

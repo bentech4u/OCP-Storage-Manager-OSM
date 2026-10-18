@@ -2,7 +2,7 @@
 <div class="banner {{ 'ok' if result.ok and not counts.warn else ('warn' if result.ok else 'bad') }}">
   <span>{{ "✓" if result.ok and not counts.warn else ("!" if result.ok else "⚠") }}</span>
   <div><strong>{{ counts.pass }} passed, {{ counts.warn }} warning{{ "" if counts.warn == 1 else "s" }},
-    {{ counts.fail }} failed.</strong>
+    {{ counts.fail }} failed{% if counts.info %}, {{ counts.info }} noted{% endif %}.</strong>
     <div class="small muted">{{ result.total }} checks at {{ result.ran }} UTC.
       {% if not result.ok %}A failure stops replication working; fix those first.
       {% elif counts.warn %}Nothing is broken, but the warnings will become failures.
@@ -24,6 +24,7 @@
         <td style="width:6rem">
           {% if r.level == "pass" %}<span class="pill ok">pass</span>
           {% elif r.level == "warn" %}<span class="pill warn">watch</span>
+          {% elif r.level == "info" %}<span class="pill info">found</span>
           {% else %}<span class="pill bad">fail</span>{% endif %}</td>
         <td class="small"><strong>{{ r.what }}</strong></td>
         <td class="small">{{ r.detail }}
