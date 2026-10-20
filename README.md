@@ -34,6 +34,30 @@ database, so it runs happily on a disconnected installer host.
   are waiting at the target. A move with failed checks is refused unless it is explicitly overridden,
   which is what a real outage at the other site looks like.
 * Creates the claims at the site now serving a group, which a failover does not do by itself.
+* Takes a replication group apart in the order that works: the group first, because while it
+  exists the driver puts the policy back, then the policies, cancelling a running job and falling
+  back to a local-only delete when the far side cannot be tidied, then the association the far
+  array holds, then the directory if it is empty. Volumes and claims are never deleted.
+* Finds what is left over: a SyncIQ policy with no group behind it, a group with no policy, an
+  association with neither, a directory nothing refers to - each with why it is listed.
+* Maps every volume to its claim, group, SyncIQ policy and the path at each end, searchable.
+* Checks the environment before anything is provisioned or moved: licences, services, privileges,
+  the base path, certificate expiry on the management interface and on every SyncIQ server and
+  peer certificate, whether each node of an array answers the same, the driver and replication
+  controller in each cluster, whether a cluster knows its peer, and whether every replicated
+  storage class names a cluster and array that exist. It then walks the network paths the whole
+  thing depends on - from the installer to every cluster and array, and from inside each cluster
+  to its peer and to both arrays - using a driver pod that is already running, creating nothing.
+* Reads what each cluster already runs and says where the two sides disagree: different driver
+  versions, replication on one side only, a missing controller, different install methods or
+  namespaces, a replicated class with no partner at the far end, a secret missing an array.
+* Keeps up with a renewed SyncIQ certificate: reads what each array presents now, says where that
+  differs from what is recorded, whether the peer trusts it and which policies still name the old
+  one, then adopts the current ids, repoints the policies and rewrites isilon-creds.
+* Writes down the YAML of everything it applies, and previews a storage class pair before it is
+  created.
+* Adopts a driver somebody else installed: the release name is yours, its values can be kept as
+  they are, and the credentials secret can be left alone.
 * Streams the output of every action into the page, and keeps the logs.
 * Watches the lot on a timer and raises alerts by mail or webhook when something breaks: a cluster
   or array out of reach, a driver whose pods are not ready, a replication group in error, failed
@@ -48,10 +72,16 @@ a failover.
 
 | Page | Purpose |
 |---|---|
-| Home | Cluster, array and driver health, replication group count, tool versions, recent activity |
-| Operations | Replication groups and their actions, SyncIQ policies, job history with full logs |
-| Install & Configure | Tools, clusters, arrays, driver install, storage classes, replication wiring |
+| Home | Cluster, array and driver health, replication group count, tool versions, open alerts, recent activity |
+| Operations | Replication groups and their actions, cleanup, SyncIQ policies, job history with full logs |
+| Volumes | Every volume mapped to its claim, group, policy and far-side path, and what is left over on either side |
+| Prechecks | Is the environment ready: arrays, clusters, certificates, the network paths, what is installed and where the two sides disagree |
+| Install & Configure | Tools, clusters, arrays, driver install, storage classes, replication wiring, certificates, generated YAML |
 | Setup | Administrator password, Microsoft Entra ID or other OpenID Connect sign-in, alerting, reset |
+| Audit | Who did what, paged and searchable, with the hash chain that makes it tamper-evident |
+
+Screenshots below are of Install & Configure, Operations and Setup. The Volumes and Prechecks
+pages are newer than the images; `docs/screenshots/` is where they go when they are taken.
 
 ![Install and Configure](docs/screenshots/install.png)
 
@@ -119,6 +149,14 @@ osmctl rg list
 osmctl rg failover --rg <group> --target cluster-2 --yes
 osmctl rg preflight --rg <group> --source cluster-1 --target cluster-2
 osmctl rg claims --rg <group> --namespace t24
+osmctl prechecks [--failed-only]    # is the environment ready, exits non-zero if not
+osmctl volumes --search infra-test  # claim, volume, group, policy, far side
+osmctl orphans                      # what is left over on one side only
+osmctl orphans remove --kind policy --where main --name <policy>
+osmctl cleanup --rg <group>         # take one group apart, in the right order
+osmctl cert list | adopt | secrets  # after storage renews a certificate
+osmctl cert push --owner main --peer dr --file new.pem
+osmctl audit list | export | verify | archive
 osmctl alerts list | check [--send] | test
 osmctl admin passwd                 # locked out of the console? set it here
 osmctl admin backup --out /backup/osm.tar.gz
@@ -187,6 +225,40 @@ If `app/requirements.txt` changed in a bundle, the update says so: the virtual
 environment is not touched, and on a host with no internet the new wheels have to be
 carried across and installed with `.venv/bin/pip install -r app/requirements.txt`.
 
+## How to
+
+**After the storage team renews a SyncIQ certificate.** The renewal happens on the array; three
+things still name the old one. On Install & Configure → Certificates press **Check**, then **Adopt
+current ids** (records what the arrays present now and repoints any policy still naming the old
+certificate), then **Update isilon-creds** (rewrites the secret on every cluster). If the peer
+array does not trust the new certificate yet, push the PEM from the same card. From a shell:
+`osmctl cert list`, then `adopt`, then `secrets`.
+
+**Before provisioning into a new namespace, or before a change window.** Prechecks → **Run the
+checks**. Everything there only reads. A failure stops replication working; a warning will become
+one. `osmctl prechecks --failed-only` exits non-zero, so it can gate a pipeline.
+
+**After deleting a test project.** Deleting the claims and the namespace does not remove the
+replication group, and while the group exists the driver recreates the SyncIQ policy however many
+times you delete it on the array. Use **Clean up** on the group in Operations, or
+`osmctl cleanup --rg <group>`. Then Volumes → **Left over** for anything that predates it.
+
+**Taking over a driver this console did not install.** Do not install a second one beside it: the
+CSIDriver object and the node plugin socket are one per cluster, not one per namespace. On the
+driver step open *A driver is already installed here*, give the release name, tick **Keep the
+values this release already has** and **Leave the existing isilon-creds secret alone**. The
+console then changes only the replication switch.
+
+**Two cluster pairs sharing one pair of arrays.** Give each pair its own `volumeGroupPrefix`. The
+volume group - which is both the directory under the base path and the SyncIQ policy name - is
+built from the prefix, the namespace, the far array's address and the objective, and nothing in it
+says which cluster it came from. Two pairs with the same prefix and a namespace of the same name
+produce one policy that both clusters believe they own. A different base path or access zone
+separates the data but not the policy name, because the name has no path in it.
+
+**Seeing what a volume is doing.** Volumes maps each claim to its volume, group, SyncIQ policy and
+the path at both ends, and searches across all of it.
+
 ## Layout
 
 ```
@@ -230,6 +302,25 @@ they shape how the console behaves:
   restart, and the console reports which authentication types each array accepts.
 * A replicated storage class needs six parameters, not the three Dell's page calls mandatory, and
   the recovery point objective must be one of seven exact strings.
+* An expired certificate fails quietly in the worst way: the SyncIQ policy is created at the
+  source and the far side refuses the connection, so nothing appears in Kubernetes and nothing
+  says why. Hence the expiry checks on both the management certificate and every SyncIQ one.
+* OneFS answers 401 with the same page whether basic authentication is switched off, the password
+  is wrong, or the account lacks `ISI_PRIV_LOGIN_PAPI`. The body does not tell them apart; a
+  session login does, which is what the console uses before reporting a cause.
+* A SyncIQ session cookie belongs to the node that issued it, and an array keeps a limited number
+  of sessions per account. A client that reconnects to a balanced name, or logs in on every poll,
+  eventually gets a 401 that looks exactly like bad credentials.
+* Deleting a policy on the array is pointless while its replication group still exists: the driver
+  puts it back. The group goes first, and its finalizer may need releasing by hand.
+* `isi sync policies delete` takes `--force` to ignore a running job and `--local-only` to skip
+  tidying the far side, which is the escape when the far side is unreachable. On the target array
+  the thing to remove is not a policy but an association: `isi sync target break`.
+* Encrypted SyncIQ connects on TCP 2098. 3148 is the older unencrypted path, and on a 9.15
+  cluster it is not open on the external interface at all.
+* The volume group name, which is both the directory and the policy name, carries no cluster
+  identity. Two cluster pairs sharing arrays must use different `volumeGroupPrefix` values; a
+  different base path or access zone separates the data but not the name.
 
 ## Licence
 
