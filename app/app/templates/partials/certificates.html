@@ -1,0 +1,45 @@
+{% set s = survey %}
+{% if s.clean %}
+<div class="banner ok" style="margin:0 1rem 1rem"><span>✓</span><div>Every array's current
+  certificate is the one recorded here, each peer trusts the other, and no policy points at
+  an old one.</div></div>
+{% else %}
+<div class="banner warn" style="margin:0 1rem 1rem"><span>!</span><div>
+  <strong>Something has moved on.</strong>
+  {% if s.changed %}{{ s.changed | map(attribute="name") | join(", ") }} present a different
+    certificate than the one recorded here.{% endif %}
+  {% if s.untrusted %} {{ s.untrusted | length }} trust relationship(s) missing.{% endif %}
+  {% if s.stale %} {{ s.stale | length }} policy(ies) still name an old certificate.{% endif %}
+</div></div>
+{% endif %}
+<table>
+  <thead><tr><th>Array</th><th>Certificate it presents</th><th>Recorded here</th>
+    <th>Trusted by</th><th>Expires</th></tr></thead>
+  <tbody>
+    {% for r in s.rows %}
+    <tr>
+      <td class="small"><strong>{{ r.name }}</strong><div class="muted">{{ r.endpoint }}</div></td>
+      <td class="small mono">{{ r.current[:20] or "unknown" }}{% if r.current %}…{% endif %}
+        {% if r.error %}<div class="muted">{{ r.error }}</div>{% endif %}</td>
+      <td class="small mono">
+        {% if r.changed %}<span class="pill warn">differs</span>
+          <div class="muted">{{ r.stored[:20] or "nothing" }}…</div>
+        {% else %}<span class="pill ok">same</span>{% endif %}</td>
+      <td class="small">
+        {% for peer, ok in r.trusted_by.items() %}
+          <span class="pill {{ 'ok' if ok else 'bad' }}">{{ peer }}</span>
+        {% else %}<span class="muted">no peer registered</span>{% endfor %}</td>
+      <td class="small {{ 'bad' if r.days is not none and r.days < 0 else
+        ('warn' if r.days is not none and r.days < 45 else 'muted') }}">
+        {{ r.expires_text }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if s.stale %}
+<div class="small" style="padding:.6rem 1rem">
+  Policies naming an old certificate:
+  {% for p in s.stale %}<div class="muted mono">{{ p.on }}: {{ p.policy }} has
+    {{ p.has[:16] or "none" }}…, should be {{ p.wanted[:16] }}…</div>{% endfor %}
+</div>
+{% endif %}

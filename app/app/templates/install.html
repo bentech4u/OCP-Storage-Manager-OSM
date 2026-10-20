@@ -430,6 +430,53 @@
 </section>
 
 <!-- 6. replication wiring -->
+<!-- certificates, when the storage team renews one -->
+<section class="section" id="certificates">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0">
+      <div><h2>Certificates</h2>
+        <div class="sub">when the storage team renews a SyncIQ certificate, the id recorded
+          here, the id inside isilon-creds and the one on each policy all still name the old
+          one</div></div>
+      <div class="btn-row" style="margin:0">
+        <button class="btn sm" hx-get="/install/certificates" hx-target="#certs">Check</button>
+        <button class="btn sm" hx-post="/install/certificates/adopt" hx-target="#output"
+          data-confirm="Record the certificate ids the arrays present now, and repoint any policy that names an old one?">Adopt current ids</button>
+        <button class="btn sm" hx-post="/install/certificates/secrets" hx-target="#output"
+          data-confirm="Write isilon-creds again on every cluster with the current ids?">Update isilon-creds</button>
+      </div>
+    </div>
+    <div id="certs" hx-get="/install/certificates" hx-trigger="load"></div>
+    <details class="fold" style="margin:0 1rem 1rem">
+      <summary><span class="chev">&#9656;</span> Push a certificate to the other array
+        <span class="muted small">only needed when the peer does not trust it yet</span></summary>
+      <form hx-post="/install/certificates/push" hx-target="#output"
+            hx-encoding="multipart/form-data" autocomplete="off">
+        <div class="row three">
+          <div class="field"><label>Certificate belongs to</label>
+            <select name="owner" data-pair="peer">
+              {% for a in arrays %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+            </select></div>
+          <div class="field"><label>Trust it on</label>
+            <select name="peer" data-pair="owner">
+              {% for a in arrays %}<option value="{{ a.id }}"
+                {% if arrays|length > 1 and loop.index == 2 %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+            </select></div>
+          <div class="field"><label>Certificate file (PEM)</label>
+            <input type="file" name="certificate" accept=".pem,.crt,.cer">
+            <div class="hint">the public certificate the storage team issued, not its key</div></div>
+        </div>
+        <div class="row three">
+          <div class="field"><label>Name it on the array</label>
+            <input type="text" name="name" placeholder="left blank, the array name and today's date">
+          </div><div class="field"></div><div class="field"></div>
+        </div>
+        <button class="btn">Push and trust</button>
+      </form>
+    </details>
+  </div>
+</section>
+
 <!-- the yaml behind every operation -->
 <section class="section" id="manifests">
   <div class="card pad-0">

@@ -340,6 +340,54 @@ class OneFS:
                  "not_before": c.get("not_before") or 0, "kind": kind}
                 for c in rows]
 
+    # -- certificates ---------------------------------------------------------
+    def put_file(self, path: str, payload: bytes, mode: str = "0600") -> bool:
+        """Write a file into /ifs, creating the directory above it if needed."""
+        parent = path.rsplit("/", 1)[0]
+        url = self.base + "/namespace" + urllib.parse.quote(parent) + "?recursive=true"
+        req = urllib.request.Request(url, method="PUT")
+        self._auth(req)
+        req.add_header("x-isi-ifs-target-type", "container")
+        try:
+            urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx).close()
+        except urllib.error.HTTPError:
+            pass                                    # already there is the usual answer
+        except (urllib.error.URLError, OSError) as exc:
+            raise ArrayError(f"cannot reach {self.base}: {exc}") from exc
+        url = self.base + "/namespace" + urllib.parse.quote(path)
+        req = urllib.request.Request(url, data=payload, method="PUT")
+        self._auth(req)
+        req.add_header("x-isi-ifs-target-type", "object")
+        req.add_header("x-isi-ifs-access-control", mode)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as resp:
+                return resp.status in (200, 201)
+        except urllib.error.HTTPError as exc:
+            raise ArrayError(f"could not write {path}: {message_of(_json(exc.read())) or exc.code}")
+
+    def import_peer_certificate(self, path_on_array: str, name: str,
+                                description: str = "") -> str:
+        """Trust a peer's SyncIQ certificate. Returns its id, the sha256 fingerprint."""
+        status, data = self._req("POST", "/platform/16/sync/certificates/peer",
+                                 {"certificate_path": path_on_array, "name": name,
+                                  "description": description or "imported by OSM"})
+        if status in (200, 201):
+            return data.get("id", "")
+        raise ArrayError(f"the array refused the certificate: "
+                         f"{message_of(data) or 'HTTP ' + str(status)}")
+
+    def delete_peer_certificate(self, cert_id: str) -> bool:
+        status, _ = self._req("DELETE", f"/platform/16/sync/certificates/peer/{cert_id}")
+        return status in (200, 204)
+
+    def set_policy_certificate(self, policy: str, cert_id: str) -> bool:
+        """Point one policy at the certificate its target now presents."""
+        status, data = self._req("PUT", f"/platform/16/sync/policies/{policy}",
+                                 {"target_certificate_id": cert_id})
+        if status in (200, 204):
+            return True
+        raise ArrayError(f"{policy}: {message_of(data) or 'HTTP ' + str(status)}")
+
     def check_path(self, isi_path: str) -> dict:
         st, data = self.get("/namespace" + urllib.parse.quote(isi_path) + "?detail=mode,type,owner")
         return {"exists": st == 200, "detail": data if st == 200 else {}, "status": st}

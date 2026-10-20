@@ -14,7 +14,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .. import config, store
 from ..config import DRIVER_NAMESPACE_DEFAULT, match_owner
-from ..services import audit, installer, inventory, k8s, manifests, replication, tools
+from ..services import (audit, certs, installer, inventory, k8s, manifests, replication,
+                        tools)
 from ..services.arrays import ArrayError, OneFS, secret_yaml
 from ..services.jobs import Job, start
 from ..templating import templates
@@ -608,6 +609,79 @@ def uninstall_driver(request: Request, cluster_id: str = Form(...), force: str =
 
     job = start(f"Uninstall driver on {cluster_id}", "driver", work, cluster=cluster_id, actor=getattr(request.state, "user", ""),
                  via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+# --- certificates ----------------------------------------------------------------
+@router.get("/install/certificates", response_class=HTMLResponse)
+def certificates_panel(request: Request):
+    """What each array presents now, against what everything else still believes."""
+    return templates.TemplateResponse(request, "partials/certificates.html",
+                                      {"survey": certs.survey(),
+                                       "arrays": [_safe(a) for a in
+                                                  store.load()["arrays"].values()]})
+
+
+@router.post("/install/certificates/adopt", response_class=HTMLResponse)
+def certificates_adopt(request: Request):
+    """Record the ids the arrays present now and repoint any stale policy."""
+    def work(job: Job):
+        result = certs.adopt(job)
+        audit.record("certificates.adopt", actor=getattr(request.state, "user", ""),
+                     via=getattr(request.state, "via", ""), outcome="ok",
+                     detail=f"updated {', '.join(result['changed']) or 'nothing'}; "
+                            f"repointed {len(result['fixed'])} policy(ies)")
+        inventory.invalidate()
+
+    job = start("Adopt the current certificates", "certificates", work,
+                actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+@router.post("/install/certificates/push", response_class=HTMLResponse)
+async def certificates_push(request: Request, owner: str = Form(...), peer: str = Form(...),
+                            name: str = Form(""),
+                            certificate: UploadFile | None = File(None)):
+    """Make the peer trust a certificate file the storage team issued."""
+    payload = await certificate.read() if certificate and certificate.filename else b""
+    if not payload:
+        return HTMLResponse('<div class="banner bad"><span>⚠</span><div>Choose the '
+                            'certificate file, in PEM form.</div></div>')
+    if owner == peer:
+        return HTMLResponse('<div class="banner bad"><span>⚠</span><div>The two arrays have '
+                            'to be different: one owns the certificate, the other trusts it.'
+                            '</div></div>')
+
+    def work(job: Job):
+        digest = certs.push_trust(job, owner, peer, payload, name.strip())
+        audit.record("certificates.push", actor=getattr(request.state, "user", ""),
+                     via=getattr(request.state, "via", ""), target=owner, outcome="ok",
+                     detail=f"{peer} now trusts {digest[:16]}")
+        inventory.invalidate()
+
+    job = start(f"Push {owner}'s certificate to {peer}", "certificates", work,
+                actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+@router.post("/install/certificates/secrets", response_class=HTMLResponse)
+def certificates_secrets(request: Request):
+    """Write isilon-creds again everywhere, with the ids as they are now."""
+    def work(job: Job):
+        done = certs.refresh_secrets(job)
+        audit.record("certificates.secrets", actor=getattr(request.state, "user", ""),
+                     via=getattr(request.state, "via", ""), outcome="ok",
+                     detail=f"isilon-creds rewritten on {', '.join(done) or 'nothing'}")
+        inventory.invalidate()
+
+    job = start("Update isilon-creds everywhere", "certificates", work,
+                actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 

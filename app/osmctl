@@ -803,6 +803,36 @@ def cmd_update(args) -> None:
             print(f"restart it by hand: systemctl restart ocpstorage-console ({exc})")
 
 
+def cmd_cert(args) -> None:
+    from app.services import certs
+    if args.sub == "list":
+        found = certs.survey()
+        table([{"array": r["name"], "presents": r["current"][:20] or "unknown",
+                "recorded": "same" if not r["changed"] else (r["stored"][:20] or "nothing"),
+                "expires": r["expires_text"],
+                "trusted by": ", ".join(p for p, ok in r["trusted_by"].items() if ok) or "-"}
+               for r in found["rows"]],
+              ["array", "presents", "recorded", "expires", "trusted by"])
+        for name, peer in found["untrusted"]:
+            print(f"\n  {peer} does not trust {name}'s current certificate")
+        for stale in found["stale"]:
+            print(f"  {stale['on']}: policy {stale['policy']} names an old certificate")
+        raise SystemExit(0 if found["clean"] else 1)
+    if args.sub == "adopt":
+        job = run_sync("adopt the current certificates", "certificates", certs.adopt)
+        raise SystemExit(0 if job.status == "ok" else 1)
+    if args.sub == "secrets":
+        job = run_sync("update isilon-creds everywhere", "certificates",
+                       certs.refresh_secrets)
+        raise SystemExit(0 if job.status == "ok" else 1)
+    if args.sub == "push":
+        payload = Path(args.file).read_bytes()
+        job = run_sync(f"push {args.owner} certificate to {args.peer}", "certificates",
+                       lambda j: certs.push_trust(j, args.owner, args.peer, payload,
+                                                  args.name))
+        raise SystemExit(0 if job.status == "ok" else 1)
+
+
 def cmd_prechecks(args) -> None:
     from app.services import prechecks
     result = prechecks.run_all()
@@ -1069,6 +1099,22 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--file", help="a particular backup (default: the newest)")
     rb.add_argument("--yes", action="store_true")
     rb.set_defaults(func=cmd_update)
+
+    ct = sub.add_parser("certificates", aliases=["cert"],
+                        help="keep up with a renewed SyncIQ certificate")
+    cts = ct.add_subparsers(dest="sub", required=True)
+    cts.add_parser("list", help="what each array presents, against what is recorded"
+                   ).set_defaults(func=cmd_cert)
+    cts.add_parser("adopt", help="record the current ids and repoint stale policies"
+                   ).set_defaults(func=cmd_cert)
+    cts.add_parser("secrets", help="write isilon-creds again with the current ids"
+                   ).set_defaults(func=cmd_cert)
+    cp = cts.add_parser("push", help="make the peer trust a certificate file")
+    cp.add_argument("--owner", required=True, help="array id the certificate belongs to")
+    cp.add_argument("--peer", required=True, help="array id that should trust it")
+    cp.add_argument("--file", required=True, help="the PEM file")
+    cp.add_argument("--name", default="", help="what to call it on the array")
+    cp.set_defaults(func=cmd_cert)
 
     pc = sub.add_parser("prechecks", help="is the environment ready to provision and replicate")
     pc.add_argument("--failed-only", action="store_true", help="hide what already passes")
