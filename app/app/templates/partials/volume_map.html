@@ -1,0 +1,38 @@
+<div class="card pad-0">
+  <div class="card-head" style="padding:1rem 1.1rem 0">
+    <div><h2>{{ rows|length }} volume{{ "" if rows|length == 1 else "s" }}</h2>
+      <div class="sub">claim, volume, group, policy and the path at each end</div></div>
+    {% for c in facts.clusters if not c.reachable %}
+    <span class="pill bad">{{ c.id }} unreachable</span>
+    {% endfor %}
+  </div>
+  <table>
+    <thead><tr><th>Claim</th><th>Volume</th><th>Cluster</th><th>Replication</th>
+      <th>Here</th><th>Far side</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="small"><strong>{{ r.namespace }}/{{ r.claim or "unbound" }}</strong>
+          <div class="muted">{{ r.storage_class }}{% if r.size %}, {{ r.size }}{% endif %}</div></td>
+        <td class="small mono">{{ r.pv }}
+          <div class="muted">{{ r.phase }}{% if r.reclaim %}, {{ r.reclaim|lower }} on release{% endif %}</div></td>
+        <td class="small">{{ r.cluster }}</td>
+        <td class="small">
+          {% if r.replicated %}
+            <span class="pill {{ 'ok' if r.link in ('SYNCHRONIZED','Synchronized') else 'warn' }}">
+              {{ r.link or "unknown" }}</span>
+            <div class="muted mono">{{ r.group }}</div>
+            {% if r.policy %}<div class="muted">policy {{ r.policy }}
+              on {{ r.policy_array }}{% if r.policy_state %}, {{ r.policy_state }}{% endif %}</div>
+            {% else %}<div class="bad small">no SyncIQ policy matches this group</div>{% endif %}
+          {% else %}<span class="pill mute">not replicated</span>{% endif %}</td>
+        <td class="small mono truncate" title="{{ r.here or r.path }}">{{ r.here or r.path or "-" }}</td>
+        <td class="small mono truncate" title="{{ r.far }}">{{ r.far or "-" }}
+          {% if r.remote_cluster %}<div class="muted">{{ r.remote_cluster }}</div>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">No volumes from this driver, or none match that search.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

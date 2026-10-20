@@ -106,6 +106,13 @@
         Create claims</button>
     </form>
     {% endif %}
+    <form hx-post="/volumes/cleanup" hx-target="#output" style="display:inline">
+      <input type="hidden" name="rg" value="{{ g.name }}">
+      <button class="btn sm"
+        data-confirm="Take {{ g.name }} apart: remove the group from both clusters, delete its SyncIQ policies, break the association at the far array and drop the directory if it is empty. Volumes and claims are left alone. Continue?"
+        title="Remove this group and everything the arrays still hold for it. Volumes are never deleted.">
+        Clean up</button>
+    </form>
     <div class="spacer"></div>
     {% if g.failed_over %}
     <button class="btn sm danger" disabled

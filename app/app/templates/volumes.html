@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Volumes - {{ app_name }}{% endblock %}
+{% block crumbs %}Volumes{% endblock %}
+{% block heading %}Volumes and what is left over{% endblock %}
+{% block topactions %}
+<button class="btn sm" hx-get="/volumes/map" hx-target="#map" hx-include="[name=q]">
+  <span class="spin htmx-indicator"></span> Refresh</button>
+{% endblock %}
+{% block content %}
+<div id="output"></div>
+
+<div class="card" style="margin-bottom:1rem">
+  <form hx-get="/volumes/map" hx-target="#map" hx-trigger="submit, keyup changed delay:400ms from:input">
+    <div class="row three">
+      <div class="field" style="grid-column:span 2"><label>Search</label>
+        <input type="text" name="q" value="{{ q }}"
+               placeholder="a namespace, claim, volume, storage class, group or policy"
+               autocomplete="off"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn">Search</button></div>
+    </div>
+  </form>
+</div>
+
+<div id="map" hx-get="/volumes/map" hx-trigger="load"></div>
+
+<section class="section" id="orphans" style="margin-top:1.4rem">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0">
+      <div><h2>Left over</h2>
+        <div class="sub">a policy with no group behind it, a group with no policy, an
+          association with neither, a directory nobody refers to</div></div>
+      <button class="btn sm" hx-get="/volumes/orphans" hx-target="#orphan-list">Scan</button>
+    </div>
+    <div id="orphan-list" hx-get="/volumes/orphans" hx-trigger="load"></div>
+  </div>
+</section>
+{% endblock %}

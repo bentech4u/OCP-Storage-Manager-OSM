@@ -388,6 +388,66 @@ class OneFS:
             return True
         raise ArrayError(f"{policy}: {message_of(data) or 'HTTP ' + str(status)}")
 
+    # -- tidying up -----------------------------------------------------------
+    def cancel_jobs(self, policy: str) -> list[str]:
+        """Stop any running job for a policy, since one blocks the policy's removal."""
+        status, data = self.get("/platform/16/sync/jobs")
+        if status != 200:
+            return []
+        stopped = []
+        for job in data.get("jobs", []):
+            name = job.get("policy_name") or job.get("id", "")
+            if name != policy or (job.get("state") or "") in ("finished", "canceled"):
+                continue
+            st, _ = self._req("PUT", f"/platform/16/sync/jobs/{job.get('id', name)}",
+                              {"state": "canceled"})
+            if st in (200, 204):
+                stopped.append(name)
+        return stopped
+
+    def delete_policy(self, name: str, force: bool = True,
+                      local_only: bool = False) -> tuple[bool, str]:
+        """Remove a policy. local_only skips tidying the far side, which is what is
+        needed when the far side cannot be reached or no longer knows about it."""
+        query = f"?force={'true' if force else 'false'}"
+        if local_only:
+            query += "&local_only=true"
+        status, data = self._req("DELETE", f"/platform/16/sync/policies/{name}{query}")
+        if status in (200, 204):
+            return True, ""
+        return False, message_of(data) or f"HTTP {status}"
+
+    def break_target(self, name: str, force: bool = True) -> tuple[bool, str]:
+        """Drop an incoming association. The data stays; only the link goes."""
+        status, data = self._req(
+            "DELETE", f"/platform/16/sync/target/policies/{name}"
+                      f"?force={'true' if force else 'false'}")
+        if status in (200, 204):
+            return True, ""
+        return False, message_of(data) or f"HTTP {status}"
+
+    def directory_entries(self, path: str) -> list[str]:
+        status, data = self.get("/namespace" + urllib.parse.quote(path) + "?detail=type")
+        if status != 200:
+            return []
+        return [c.get("name", "") for c in data.get("children", [])]
+
+    def remove_directory(self, path: str) -> tuple[bool, str]:
+        """Only ever an empty one: anything inside is somebody's data."""
+        entries = self.directory_entries(path)
+        if entries:
+            return False, f"it still holds {len(entries)} item(s)"
+        url = self.base + "/namespace" + urllib.parse.quote(path)
+        req = urllib.request.Request(url, method="DELETE")
+        self._auth(req)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as resp:
+                return resp.status in (200, 204), ""
+        except urllib.error.HTTPError as exc:
+            return False, message_of(_json(exc.read())) or f"HTTP {exc.code}"
+        except (urllib.error.URLError, OSError) as exc:
+            return False, str(exc)[:160]
+
     def check_path(self, isi_path: str) -> dict:
         st, data = self.get("/namespace" + urllib.parse.quote(isi_path) + "?detail=mode,type,owner")
         return {"exists": st == 200, "detail": data if st == 200 else {}, "status": st}

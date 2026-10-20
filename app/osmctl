@@ -803,6 +803,59 @@ def cmd_update(args) -> None:
             print(f"restart it by hand: systemctl restart ocpstorage-console ({exc})")
 
 
+def cmd_volumes(args) -> None:
+    from app.services import cleanup
+    facts = cleanup.survey()
+    rows = cleanup.volume_map(facts)
+    if args.search:
+        needle = args.search.lower()
+        rows = [r for r in rows if needle in " ".join(str(v) for v in r.values()).lower()]
+    table([{"claim": f"{r['namespace']}/{r['claim']}", "volume": r["pv"],
+            "cluster": r["cluster"], "class": r["storage_class"],
+            "group": r["group"] or "-", "link": r["link"] or "-",
+            "policy": r["policy"] or "-"} for r in rows],
+          ["claim", "volume", "cluster", "class", "group", "link", "policy"])
+
+
+def cmd_orphans(args) -> None:
+    from app.services import cleanup
+    found = cleanup.orphans()
+    if found["clean"]:
+        print("nothing left over")
+        return
+    table([{"kind": i["kind"], "where": i["where"], "name": i["name"][:60],
+            "why": i["why"][:60]} for i in found["items"]],
+          ["kind", "where", "name", "why"])
+    print("\nremove one with: osmctl orphans remove --kind <kind> --where <id> --name <name>")
+
+
+def cmd_orphan_remove(args) -> None:
+    from app.services import cleanup
+    if not args.yes:
+        answer = input(f"remove the {args.kind} {args.name}? type yes: ").strip().lower()
+        if answer != "yes":
+            print("nothing changed")
+            return
+    job = run_sync(f"remove {args.kind} {args.name}", "cleanup",
+                   lambda j: cleanup.clean_item(j, args.kind, args.where, args.name))
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
+def cmd_cleanup_group(args) -> None:
+    from app.services import cleanup
+    if not args.yes:
+        print(f"this removes the group {args.rg} from both clusters, its SyncIQ policies, "
+              "the association at the far array and the directory if it is empty.")
+        print("volumes and claims are left alone.")
+        if input("continue? type yes: ").strip().lower() != "yes":
+            print("nothing changed")
+            return
+    job = run_sync(f"clean up {args.rg}", "cleanup",
+                   lambda j: cleanup.clean_group(j, args.rg,
+                                                 drop_directory=not args.keep_directory))
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
 def cmd_cert(args) -> None:
     from app.services import certs
     if args.sub == "list":
@@ -1099,6 +1152,29 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--file", help="a particular backup (default: the newest)")
     rb.add_argument("--yes", action="store_true")
     rb.set_defaults(func=cmd_update)
+
+    vm = sub.add_parser("volumes", help="claim, volume, group, policy, far side")
+    vm.add_argument("--search", default="", help="narrow it to anything matching")
+    vm.set_defaults(func=cmd_volumes)
+
+    orp = sub.add_parser("orphans", help="what is left over on one side only")
+    orps = orp.add_subparsers(dest="sub")
+    orp.set_defaults(func=cmd_orphans, sub="list")
+    orps.add_parser("list").set_defaults(func=cmd_orphans)
+    orm = orps.add_parser("remove", help="remove one, exactly as the list names it")
+    orm.add_argument("--kind", required=True,
+                     choices=["policy", "target", "directory", "group"])
+    orm.add_argument("--where", required=True, help="the array or cluster id")
+    orm.add_argument("--name", required=True)
+    orm.add_argument("--yes", action="store_true")
+    orm.set_defaults(func=cmd_orphan_remove)
+
+    cg = sub.add_parser("cleanup", help="take one replication group apart, in order")
+    cg.add_argument("--rg", required=True)
+    cg.add_argument("--keep-directory", action="store_true",
+                    help="leave the volume group directory on the array")
+    cg.add_argument("--yes", action="store_true")
+    cg.set_defaults(func=cmd_cleanup_group)
 
     ct = sub.add_parser("certificates", aliases=["cert"],
                         help="keep up with a renewed SyncIQ certificate")

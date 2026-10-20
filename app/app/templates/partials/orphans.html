@@ -1,0 +1,27 @@
+{% if found.clean %}
+<div class="banner ok" style="margin:1rem"><span>✓</span><div>Nothing left over: every policy
+  has a group, every group has a policy, and no directory is unaccounted for.</div></div>
+{% else %}
+<table>
+  <thead><tr><th>What</th><th>Where</th><th>Name</th><th>Why it is listed</th><th></th></tr></thead>
+  <tbody>
+    {% for item in found['items'] %}
+    <tr>
+      <td><span class="pill warn">{{ item.kind }}</span></td>
+      <td class="small">{{ item.where }}</td>
+      <td class="small mono truncate" title="{{ item.name }}">{{ item.name }}
+        <div class="muted">{{ item.detail }}</div></td>
+      <td class="small muted">{{ item.why }}<div>{{ item.danger }}</div></td>
+      <td class="nowrap">
+        <form hx-post="/volumes/orphans/remove" hx-target="#output" style="display:inline">
+          <input type="hidden" name="kind" value="{{ item.kind }}">
+          <input type="hidden" name="where" value="{{ item.cluster or item.array }}">
+          <input type="hidden" name="name" value="{{ item.name }}">
+          <button class="btn sm danger"
+            data-confirm="Remove the {{ item.kind }} {{ item.name }}? A directory is only removed when empty, and no volume is ever deleted.">Remove</button>
+        </form></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
