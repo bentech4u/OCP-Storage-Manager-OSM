@@ -30,9 +30,12 @@
 
   <div class="rg-flow">
     {% set src = g.source or g.sides[0] %}
-    {% set tgt = g.target or (g.sides[1] if g.sides|length > 1 else none) %}
-    <div class="rg-side active">
-      <div class="rg-side-head"><span class="pill ok">serving</span><strong>{{ src.cluster }}</strong></div>
+    {% set tgt = g.target or (g.sides[1] if g.sides|length > 1 and g.direction_known else none) %}
+    <div class="rg-side {{ 'active' if g.direction_known }}">
+      <div class="rg-side-head">
+        {% if g.direction_known %}<span class="pill ok">serving</span>
+        {% else %}<span class="pill mute" title="no side reports itself as the source">side</span>{% endif %}
+        <strong>{{ src.cluster }}</strong></div>
       <div class="small muted">{{ src.array }}{% if src.array_endpoint %} &middot; {{ src.array_endpoint }}{% endif %}</div>
       <div class="small">{{ src.bound }} of {{ src.volumes }} volume(s) in use</div>
       {% with pp = src.parts %}
@@ -44,10 +47,15 @@
       {% endwith %}
     </div>
 
-    <div class="rg-arrow {{ 'stalled' if not g.healthy else '' }}">
+    <div class="rg-arrow {{ '' if g.flowing else 'stalled' }}">
       <div class="rg-line"><span class="rg-dot"></span><span class="rg-dot d2"></span><span class="rg-dot d3"></span></div>
       <div class="rg-arrow-label small muted">
-        {% if g.healthy %}replicating{% elif g.failed_over %}link broken{% else %}{{ g.link or "unknown" }}{% endif %}
+        {% if not g.direction_known %}direction unknown
+        {% elif g.flowing %}replicating
+        {% elif g.healthy and g.point.state == "unknown" %}no policy on the array
+        {% elif g.healthy %}link up, {{ g.point.note or g.point.state }}
+        {% elif g.failed_over %}link broken
+        {% else %}{{ g.link or "unknown" }}{% endif %}
       </div>
     </div>
 
@@ -63,6 +71,15 @@
           >-{{ pp.address }}-{{ pp.rpo }}</span>{% else %}<span>{{ pp.folder }}</span>{% endif %}
       </div>
       {% endwith %}
+    </div>
+    {% elif g.sides|length > 1 %}
+    {% set other = g.sides[1] if g.sides[0] is sameas src else g.sides[0] %}
+    <div class="rg-side">
+      <div class="rg-side-head"><span class="pill mute"
+        title="no side reports itself as the source">side</span><strong>{{ other.cluster }}</strong></div>
+      <div class="small muted">{{ other.array }}{% if other.array_endpoint %} &middot; {{ other.array_endpoint }}{% endif %}</div>
+      <div class="small">{{ other.volumes }} volume(s)</div>
+      <div class="small path" title="{{ other.path }}">{{ other.path }}</div>
     </div>
     {% else %}
     <div class="rg-side"><div class="small muted">the other side has not reported yet</div></div>

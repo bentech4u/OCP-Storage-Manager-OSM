@@ -93,13 +93,24 @@ def _groups() -> list[dict]:
         namespaces = sorted({c.split("/")[0] for s in sides for c in s["claims"] if "/" in c})
         for side in sides:
             side["parts"] = _split_path(side["path"], namespaces)
-        source = next((s for s in sides if s["is_source"]), None)
-        target = next((s for s in sides if s is not source), None)
+        # Only one side may call itself the source. When none does - a group still
+        # being created, an action in flight, or the far cluster not reporting - the
+        # direction is not known, and saying "serving" would be inventing it. The old
+        # fallback also picked the same side twice, so one cluster appeared as both.
+        source = next((s for s in sides if s.get("is_source") is True), None)
+        others = [s for s in sides if s is not source]
+        target = others[0] if source and others else None
         link = (source or sides[0])["link"]
+        healthy = link in ("SYNCHRONIZED", "Synchronized")
         groups.append({
             "name": entry["name"], "sides": sides, "source": source, "target": target,
             "link": link,
-            "healthy": link in ("SYNCHRONIZED", "Synchronized"),
+            "direction_known": source is not None,
+            # the dots mean data is moving: do not animate them when the link is fine
+            # but the recovery point says nothing has arrived
+            "flowing": healthy and source is not None
+            and point.get("state") in ("ok", "quiet"),
+            "healthy": healthy,
             "failed_over": link == "FAILEDOVER",
             "in_progress": any("IN_PROGRESS" in (s["state"] or "") for s in sides),
             "volumes": max((s["volumes"] for s in sides), default=0),
