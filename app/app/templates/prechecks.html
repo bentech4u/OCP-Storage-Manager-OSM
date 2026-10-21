@@ -14,6 +14,28 @@
     expired certificate, a licence that lapsed, a service switched off, a peer that was
     never imported. Nothing here changes anything; every check only reads.</p>
 </div>
+<div class="card" style="margin-bottom:1rem">
+  <div class="card-head"><div><h2>Adding replication to a pair</h2>
+    <div class="sub">for a cluster that already serves volumes without it: what blocks it,
+      what the work is, and in what order</div></div></div>
+  <form hx-post="/prechecks/readiness" hx-target="#readiness">
+    <div class="row three">
+      <div class="field"><label>This site</label>
+        <select name="source" data-pair="target">
+          {% for c in clusters %}<option value="{{ c.id }}">{{ c.id }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label>The other site</label>
+        <select name="target" data-pair="source">
+          {% for c in clusters %}<option value="{{ c.id }}"
+            {% if clusters|length > 1 and loop.index == 2 %}selected{% endif %}>{{ c.id }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label>&nbsp;</label>
+        <button class="btn"><span class="spin htmx-indicator"></span> Assess</button></div>
+    </div>
+  </form>
+  <div id="readiness"></div>
+</div>
+
 <div id="checks">
   <div class="empty">Press <strong>Run the checks</strong>. It takes a few seconds for each
     array and cluster.</div>

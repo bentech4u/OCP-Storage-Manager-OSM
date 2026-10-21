@@ -1,0 +1,35 @@
+{% if r.error %}
+<div class="banner bad"><span>⚠</span><div>{{ r.error }}</div></div>
+{% else %}
+<div class="banner {{ 'ok' if r.ready and not r.counts.work else ('warn' if r.ready else 'bad') }}"
+     style="margin-top:.8rem">
+  <span>{{ "✓" if r.ready and not r.counts.work else ("!" if r.ready else "⚠") }}</span>
+  <div><strong>
+    {% if not r.ready %}{{ r.counts.blocker }} thing(s) block this.
+    {% elif r.counts.work %}Nothing blocks it; {{ r.counts.work }} item(s) of work.
+    {% else %}Ready as it stands.{% endif %}</strong>
+    <div class="small muted">{{ r.source }} → {{ r.target }}, driver
+      {{ r.here.driver_version or "none" }} and {{ r.there.driver_version or "none" }}</div></div>
+</div>
+<table>
+  <tbody>
+    {% for f in r.findings %}
+    <tr>
+      <td style="width:6.5rem">
+        {% if f.level == "blocker" %}<span class="pill bad">blocks</span>
+        {% elif f.level == "work" %}<span class="pill warn">work</span>
+        {% else %}<span class="pill info">note</span>{% endif %}</td>
+      <td class="small"><strong>{{ f.what }}</strong>
+        <div class="muted">{{ f.detail }}</div>
+        {% if f.work %}<div>{{ f.work }}</div>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<div class="card" style="margin:1rem">
+  <div class="card-head"><h2>In this order</h2></div>
+  <ol class="small" style="margin:0; padding-left:1.1rem; line-height:1.7">
+    {% for step in r.plan %}<li>{{ step }}</li>{% endfor %}
+  </ol>
+</div>
+{% endif %}

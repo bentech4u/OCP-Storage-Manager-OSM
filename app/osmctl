@@ -886,6 +886,24 @@ def cmd_cert(args) -> None:
         raise SystemExit(0 if job.status == "ok" else 1)
 
 
+def cmd_readiness(args) -> None:
+    from app.services import readiness
+    r = readiness.assess(args.source, args.target)
+    if r.get("error"):
+        die(r["error"])
+    for f in r["findings"]:
+        print(f"[{f['level']:7}] {f['what']}")
+        print(f"            {f['detail']}")
+        if f["work"]:
+            print(f"            -> {f['work']}")
+    print(f"\n{r['counts']['blocker']} blocker(s), {r['counts']['work']} item(s) of work, "
+          f"{r['counts']['note']} note(s)\n")
+    print("in this order:")
+    for i, step in enumerate(r["plan"], 1):
+        print(f"  {i}. {step}")
+    raise SystemExit(0 if r["ready"] else 1)
+
+
 def cmd_prechecks(args) -> None:
     from app.services import prechecks
     result = prechecks.run_all()
@@ -1191,6 +1209,11 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--file", required=True, help="the PEM file")
     cp.add_argument("--name", default="", help="what to call it on the array")
     cp.set_defaults(func=cmd_cert)
+
+    rd = sub.add_parser("readiness", help="what it takes to add replication to a pair")
+    rd.add_argument("--source", required=True)
+    rd.add_argument("--target", required=True)
+    rd.set_defaults(func=cmd_readiness)
 
     pc = sub.add_parser("prechecks", help="is the environment ready to provision and replicate")
     pc.add_argument("--failed-only", action="store_true", help="hide what already passes")

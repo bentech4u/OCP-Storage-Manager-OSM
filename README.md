@@ -48,6 +48,12 @@ database, so it runs happily on a disconnected installer host.
   storage class names a cluster and array that exist. It then walks the network paths the whole
   thing depends on - from the installer to every cluster and array, and from inside each cluster
   to its peer and to both arrays - using a driver pod that is already running, creating nothing.
+* Assesses what it would take to add replication to a pair that does not have it: the driver
+  version against the replication module that goes with it, the missing sidecar and controller,
+  a secret that knows only the local array, classes with no replication, the SyncIQ licence,
+  service and privilege on each array, certificate trust where encryption is required, and the
+  volumes already in service that enabling replication does not reach back for. It ends with the
+  order to do the work in.
 * Reads what each cluster already runs and says where the two sides disagree: different driver
   versions, replication on one side only, a missing controller, different install methods or
   namespaces, a replicated class with no partner at the far end, a secret missing an array.
@@ -233,6 +239,15 @@ current ids** (records what the arrays present now and repoints any policy still
 certificate), then **Update isilon-creds** (rewrites the secret on every cluster). If the peer
 array does not trust the new certificate yet, push the PEM from the same card. From a shell:
 `osmctl cert list`, then `adopt`, then `secrets`.
+
+**Adding replication to a cluster that has been serving volumes without it.** Prechecks →
+*Adding replication to a pair*: pick the two sites and press Assess. It separates what blocks the
+work from what the work is, and gives the order. The two things that usually surprise people: the
+driver may have to be upgraded, because Dell pairs each driver release with one replication module
+version; and volumes that already exist stay unprotected, because a volume is protected by the
+class it was created from, so existing claims need their data moved onto claims from a replicated
+class. `osmctl readiness --source <a> --target <b>` prints the same and exits non-zero if
+anything blocks it.
 
 **Before provisioning into a new namespace, or before a change window.** Prechecks → **Run the
 checks**. Everything there only reads. A failure stops replication working; a warning will become
