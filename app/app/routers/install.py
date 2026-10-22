@@ -183,6 +183,7 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
                       kubeconfig_path_in: str = Form(""),
                       api_server: str = Form(""), username: str = Form(""),
                       password: str = Form(""), insecure: str = Form("on"),
+                      token: str = Form(""),
                       kubeconfig_file: UploadFile | None = File(None)):
     cid = config.slug(cluster_id)
     if not cid:
@@ -195,6 +196,11 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
             if not api_server or not username or not password:
                 raise k8s.ClusterError("this route needs an API address, a user and a password")
             path = k8s.login_kubeconfig(api_server, username.strip(), password, cid,
+                                        insecure=(insecure == "on"))
+        elif connect_via == "token":
+            if not api_server or not token.strip():
+                raise k8s.ClusterError("this route needs an API address and a token")
+            path = k8s.token_kubeconfig(api_server, token, cid,
                                         insecure=(insecure == "on"))
         else:
             content = uploaded

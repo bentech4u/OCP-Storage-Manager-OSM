@@ -141,7 +141,9 @@ def check(api: str, username: str = "", password: str = "", insecure: bool = Tru
                               "" if ok else "a username and password sign-in goes here after "
                               "the API port. A firewall that allows 6443 and not this does "
                               "not refuse the sign-in, it holds it open until it times out. "
-                              "Open it, or add the cluster with a kubeconfig instead"))
+                              "Either open it from this host, or add the cluster with the "
+                              "paste a token route: a browser that can reach this endpoint "
+                              "gets the token, and the token is used on the API port alone"))
     else:
         out.append(_check("the sign-in endpoint", "warn",
                           "the API did not advertise one",

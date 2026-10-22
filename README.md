@@ -14,8 +14,8 @@ database, so it runs happily on a disconnected installer host.
 
 * Installs the PowerScale driver either with the **Dell CSM Operator** or with the **Helm chart**,
   standalone or with replication enabled.
-* Connects to clusters three ways: sign in with a user such as kubeadmin, upload a kubeconfig, or
-  point at one on the installer host. It can then create a service account with a non-expiring
+* Connects to clusters four ways: sign in with a user such as kubeadmin, paste a token, upload a
+  kubeconfig, or point at one on the installer host. It can then create a service account with a non-expiring
   token and use that from then on.
 * Registers PowerScale arrays, reading their version, access zones, licences, privileges and
   SyncIQ certificate, and creating the base path when it is missing.
@@ -247,6 +247,15 @@ current ids** (records what the arrays present now and repoints any policy still
 certificate), then **Update isilon-creds** (rewrites the secret on every cluster). If the peer
 array does not trust the new certificate yet, push the PEM from the same card. From a shell:
 `osmctl cert list`, then `adopt`, then `secrets`.
+
+**A cluster whose sign-in endpoint this host cannot reach.** OpenShift exchanges a password for
+a token at `oauth-openshift.apps.<cluster>.<domain>` on 443, through the ingress load balancer,
+not on the API port. Where that is closed to the installer, `oc login` does not fail, it waits.
+Use **Paste a token** instead: take the token from the web console's *Copy login command*, or
+from `oc whoami -t` on a machine that can sign in, and the console presents it straight to the
+API server on 6443. An OAuth token expires, so press **Export service account** once the cluster
+is in and the console swaps it for one that does not. `osmctl check-cluster --api <address>`
+tests both addresses and says which one is the problem.
 
 **Adding replication to a cluster that has been serving volumes without it.** Prechecks →
 *Adding replication to a pair*: pick the two sites and press Assess. It separates what blocks the

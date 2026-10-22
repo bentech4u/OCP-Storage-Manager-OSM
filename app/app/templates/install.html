@@ -137,6 +137,12 @@
             <div class="title">Sign in with a user</div>
             <div class="desc">kubeadmin, or any account with administrator rights. The console exchanges
               the password for a token and never stores the password.</div></label>
+          <label class="choice"><input type="radio" name="connect_via" value="token">
+            <div class="title">Paste a token</div>
+            <div class="desc">For a cluster whose sign-in endpoint this host cannot reach. Take
+              the token from the web console's <em>Copy login command</em>, or from
+              <span class="mono">oc whoami -t</span> anywhere that can sign in. The token goes
+              straight to the API port, so nothing has to reach the applications domain.</div></label>
           <label class="choice"><input type="radio" name="connect_via" value="file">
             <div class="title">Upload a kubeconfig</div>
             <div class="desc">Any working kubeconfig file from your workstation.</div></label>
@@ -154,6 +160,11 @@
             <input type="text" name="username" placeholder="kubeadmin" autocomplete="off"></div>
           <div class="field"><label>Password</label>
             <input type="password" name="password" autocomplete="new-password"></div>
+          <div class="field" style="grid-column:1 / -1"><label>Token, for the paste a token route</label>
+            <input type="password" name="token" autocomplete="off"
+                   placeholder="sha256~… from the web console or oc whoami -t">
+            <div class="hint">An OAuth token expires. Once the cluster is in, press
+              <strong>Export service account</strong> to swap it for one that does not.</div></div>
         </div>
         <div class="check"><input type="checkbox" id="insec" name="insecure" checked>
           <label for="insec">Accept the cluster's certificate without checking it</label></div>

@@ -134,6 +134,42 @@ def login_kubeconfig(server: str, username: str, password: str, cluster_id: str,
     return path
 
 
+def token_kubeconfig(server: str, token: str, cluster_id: str,
+                     insecure: bool = True, ca_data: str = "") -> Path:
+    """Build a kubeconfig from an address and a token, and keep it.
+
+    This is the way in when the sign-in endpoint is not reachable from here: a token
+    is presented straight to the API server on its own port, so nothing has to reach
+    the applications domain. Where the token came from - a browser that can reach the
+    OAuth route, or oc on another host - makes no difference to the API server.
+    """
+    ensure_dirs()
+    server = normalize_api_address(server)
+    hint = reachable(server)
+    if hint:
+        raise ClusterError(hint)
+    if not token.strip():
+        raise ClusterError("a token is needed for this route")
+    name = slug(cluster_id)
+    cluster: dict = {"server": server}
+    if ca_data.strip():
+        cluster["certificate-authority-data"] = ca_data.strip()
+    elif insecure:
+        cluster["insecure-skip-tls-verify"] = True
+    config = {
+        "apiVersion": "v1", "kind": "Config", "preferences": {},
+        "clusters": [{"name": name, "cluster": cluster}],
+        "users": [{"name": f"{name}-token", "user": {"token": token.strip()}}],
+        "contexts": [{"name": name, "context": {"cluster": name, "user": f"{name}-token"}}],
+        "current-context": name,
+    }
+    path = kubeconfig_path(cluster_id)
+    path.write_text(yaml.safe_dump(config, sort_keys=False))
+    os.chmod(path, 0o600)
+    match_owner(path)
+    return path
+
+
 def normalize_api_address(raw: str) -> str:
     """Accept what people actually paste and turn it into an API address."""
     text = (raw or "").strip().rstrip("/")
