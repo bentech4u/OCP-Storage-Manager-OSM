@@ -248,6 +248,14 @@ certificate), then **Update isilon-creds** (rewrites the secret on every cluster
 array does not trust the new certificate yet, push the PEM from the same card. From a shell:
 `osmctl cert list`, then `adopt`, then `secrets`.
 
+**On a FIPS host.** Session cookies are signed with SHA-256 rather than itsdangerous' default
+of SHA-1, which a FIPS kernel refuses outright - without it the console cannot issue or read a
+cookie and nobody can sign in. `osmctl doctor` reports whether the host is in FIPS mode. One
+thing to decide for yourself there: the local administrator password is hashed with bcrypt,
+which is not an OpenSSL primitive, so under a strict reading use single sign-on and switch local
+sign-in off with `osmctl admin local-login off`. Changing the signing digest invalidates cookies
+issued before the upgrade, so everyone signs in once more.
+
 **A cluster whose sign-in endpoint this host cannot reach.** OpenShift exchanges a password for
 a token at `oauth-openshift.apps.<cluster>.<domain>` on 443, through the ingress load balancer,
 not on the API port. Where that is closed to the installer, `oc login` does not fail, it waits.

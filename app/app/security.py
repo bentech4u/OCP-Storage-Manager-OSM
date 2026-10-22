@@ -1,6 +1,7 @@
 """Admin password, session cookies and optional OIDC login."""
 from __future__ import annotations
 
+import hashlib
 from typing import Optional
 
 from fastapi import Request
@@ -37,7 +38,15 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def _serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(session_secret(), salt="osm-session")
+    """Sign session cookies with SHA-256.
+
+    itsdangerous signs with HMAC-SHA1 unless told otherwise, and a host running in
+    FIPS mode refuses SHA-1 outright: the console then cannot issue or read a single
+    cookie, so nobody can sign in. SHA-256 is both allowed there and the better
+    choice everywhere else.
+    """
+    return URLSafeTimedSerializer(session_secret(), salt="osm-session",
+                                  signer_kwargs={"digest_method": hashlib.sha256})
 
 
 def make_session(username: str, via: str = "password", role: str = "admin") -> str:

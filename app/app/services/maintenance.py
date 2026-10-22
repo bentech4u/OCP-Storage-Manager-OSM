@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import shutil
 import socket
 import subprocess
@@ -120,6 +121,22 @@ def doctor() -> list[dict]:
 
     def add(area: str, what: str, ok: bool, detail: str = "", fix: str = "") -> None:
         checks.append({"area": area, "what": what, "ok": ok, "detail": detail, "fix": fix})
+
+    # a host in FIPS mode refuses SHA-1 and MD5 outright, which decides how the
+    # console may sign a cookie and what a strict policy allows for a password
+    fips = ""
+    try:
+        fips = pathlib.Path("/proc/sys/crypto/fips_enabled").read_text().strip()
+    except OSError:
+        fips = ""
+    if fips == "1":
+        add("host", "FIPS mode", True, "on",
+            "session cookies are signed with SHA-256, which FIPS allows. The local "
+            "administrator password is hashed with bcrypt, which is not an OpenSSL "
+            "primitive: where the policy is strict, use single sign-on and set "
+            "osmctl admin local-login off")
+    elif fips == "0":
+        add("host", "FIPS mode", True, "off", "")
 
     for name, tool in tool_status().items():
         add("tools", name, tool["found"], tool["version"] or tool["path"] or "not installed",
