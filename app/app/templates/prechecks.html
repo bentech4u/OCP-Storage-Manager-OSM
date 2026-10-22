@@ -15,6 +15,30 @@
     never imported. Nothing here changes anything; every check only reads.</p>
 </div>
 <div class="card" style="margin-bottom:1rem">
+  <div class="card-head"><div><h2>Check a cluster before adding it</h2>
+    <div class="sub">the address, the port, the certificate, the sign-in endpoint on the
+      applications domain, the credentials and what the account may do. Nothing is
+      stored</div></div></div>
+  <form hx-post="/prechecks/cluster" hx-target="#cluster-check" autocomplete="off">
+    <div class="row three">
+      <div class="field"><label>API address</label>
+        <input type="text" name="api" placeholder="https://api.cluster.example.com:6443"
+               autocomplete="off" required></div>
+      <div class="field"><label>User</label>
+        <input type="text" name="username" placeholder="kubeadmin, or leave empty"
+               autocomplete="off"></div>
+      <div class="field"><label>Password</label>
+        <input type="password" name="password" autocomplete="new-password"></div>
+    </div>
+    <div class="check"><input type="checkbox" id="ck-insecure" name="insecure" checked>
+      <label for="ck-insecure">Skip certificate verification, as the console does when
+        adding a cluster</label></div>
+    <button class="btn"><span class="spin htmx-indicator"></span> Check it</button>
+  </form>
+  <div id="cluster-check"></div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
   <div class="card-head"><div><h2>Adding replication to a pair</h2>
     <div class="sub">for a cluster that already serves volumes without it: what blocks it,
       what the work is, and in what order</div></div></div>

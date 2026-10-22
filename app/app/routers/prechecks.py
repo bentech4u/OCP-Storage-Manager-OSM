@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse
 
 from fastapi import Form
 
-from ..services import audit, prechecks as service, readiness
+from ..services import audit, clustercheck, prechecks as service, readiness
 from ..templating import templates
 
 router = APIRouter()
@@ -18,6 +18,20 @@ def prechecks_page(request: Request):
     return templates.TemplateResponse(request, "prechecks.html", {
         "page": "prechecks", "result": None,
         "clusters": list(store.load()["clusters"].values())})
+
+
+@router.post("/prechecks/cluster", response_class=HTMLResponse)
+def check_one_cluster(request: Request, api: str = Form(...), username: str = Form(""),
+                      password: str = Form(""), insecure: str = Form("on")):
+    """Everything between this host and a working sign-in, before adding anything."""
+    report = clustercheck.check(api.strip(), username.strip(), password,
+                                insecure=insecure == "on")
+    audit.record("prechecks.cluster", actor=getattr(request.state, "user", ""),
+                 via=getattr(request.state, "via", ""), target=report.get("address", api),
+                 outcome="ok" if report.get("ready") else "failed",
+                 detail=f"{sum(1 for f in report['findings'] if f['level'] == 'fail')} "
+                        "failure(s)")
+    return templates.TemplateResponse(request, "partials/cluster_check.html", {"r": report})
 
 
 @router.post("/prechecks/readiness", response_class=HTMLResponse)

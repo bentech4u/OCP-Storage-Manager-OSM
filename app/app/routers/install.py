@@ -216,6 +216,10 @@ async def add_cluster(request: Request, cluster_id: str = Form(...), role: str =
         path, info = await run_in_threadpool(connect)
     except k8s.ClusterError as exc:
         return await _page_async(request, error=f"{cid}: {exc}")
+    except Exception as exc:                                  # noqa: BLE001
+        # whatever went wrong, the operator gets an answer rather than a blank page
+        return await _page_async(request, error=(
+            f"{cid}: {type(exc).__name__} while connecting. {str(exc)[:200]}"))
 
     record = {
         "id": cid, "role": role, "namespace": namespace.strip() or DRIVER_NAMESPACE_DEFAULT,

@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import urllib.parse
+from html import escape as html_escape
 
 from . import security, store
 from .config import APP_NAME, APP_TAGLINE, ensure_dirs
@@ -43,6 +44,30 @@ async def require_login(request: Request, call_next):
                                 status_code=403)
         return JSONResponse({"detail": message}, status_code=403)
     return await call_next(request)
+
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception):
+    """Say what happened instead of dropping the connection.
+
+    A page that dies silently reads as "nothing happens", which is worse than an
+    error: the operator waits, retries, and never learns what went wrong.
+    """
+    from .services import audit as audit_service
+    detail = f"{type(exc).__name__}: {exc}"[:400]
+    audit_service.record("console.error", actor=getattr(request.state, "user", ""),
+                         via=getattr(request.state, "via", ""), outcome="failed",
+                         target=request.url.path, detail=detail)
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(
+            '<div class="banner bad"><span>⚠</span><div><strong>That did not finish.</strong> '
+            f'{html_escape(detail)}<div class="small muted">The same text is in the audit '
+            'record and in the service log.</div></div></div>', status_code=200)
+    return HTMLResponse(
+        '<!doctype html><meta charset="utf-8"><title>Something went wrong</title>'
+        '<body style="font-family:system-ui;background:#0b1020;color:#e7ecf5;padding:2rem">'
+        f'<h1 style="font-size:1.1rem">That did not finish</h1><p>{html_escape(detail)}</p>'
+        '<p><a style="color:#7aa2f7" href="/">Back to the console</a></p>', status_code=500)
 
 
 @app.on_event("startup")

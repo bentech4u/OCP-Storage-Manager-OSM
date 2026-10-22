@@ -22,7 +22,12 @@
       {% else %}
         {% for c in clusters %}
         <tr><td class="mono muted">{{ c.id }}</td>
-          <td><span class="pill mute">not registered</span></td>
+          <td>{% if c.id in repctl.files %}<span class="pill info"
+                title="a kubeconfig for it is in repctl's store; repctl itself could not be asked"
+                >in the store</span>
+              {% elif repctl.error %}<span class="pill warn"
+                title="repctl could not be asked, so this is unknown">not known</span>
+              {% else %}<span class="pill mute">not registered</span>{% endif %}</td>
           <td class="small muted">-</td>
           <td class="small muted truncate">{{ c.server }}</td></tr>
         {% endfor %}

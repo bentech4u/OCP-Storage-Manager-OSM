@@ -886,6 +886,22 @@ def cmd_cert(args) -> None:
         raise SystemExit(0 if job.status == "ok" else 1)
 
 
+def cmd_check_cluster(args) -> None:
+    from app.services import clustercheck
+    import getpass
+    password = args.password
+    if args.user and not password:
+        password = getpass.getpass("password (leave empty to skip the sign-in): ")
+    r = clustercheck.check(args.api, args.user, password, insecure=not args.verify_tls)
+    for f in r["findings"]:
+        mark = {"pass": "ok   ", "warn": "note ", "fail": "FAIL "}[f["level"]]
+        print(f"  {mark} {f['what'][:48]:50} {f['detail'][:60]}")
+        if f["fix"] and f["level"] != "pass":
+            print(f"         {f['fix'][:110]}")
+    print("\n" + ("good to add" if r["ready"] else "something stops this"))
+    raise SystemExit(0 if r["ready"] else 1)
+
+
 def cmd_readiness(args) -> None:
     from app.services import readiness
     r = readiness.assess(args.source, args.target)
@@ -1209,6 +1225,14 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--file", required=True, help="the PEM file")
     cp.add_argument("--name", default="", help="what to call it on the array")
     cp.set_defaults(func=cmd_cert)
+
+    cc = sub.add_parser("check-cluster",
+                        help="an address and a sign-in, before the cluster is added")
+    cc.add_argument("--api", required=True)
+    cc.add_argument("--user", default="")
+    cc.add_argument("--password", default="", help="omitted, it is asked for")
+    cc.add_argument("--verify-tls", action="store_true")
+    cc.set_defaults(func=cmd_check_cluster)
 
     rd = sub.add_parser("readiness", help="what it takes to add replication to a pair")
     rd.add_argument("--source", required=True)

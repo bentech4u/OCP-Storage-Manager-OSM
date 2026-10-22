@@ -1,0 +1,26 @@
+{% set failed = r.findings | selectattr("level", "equalto", "fail") | list %}
+{% set watch = r.findings | selectattr("level", "equalto", "warn") | list %}
+<div class="banner {{ 'ok' if r.ready and not watch else ('warn' if r.ready else 'bad') }}"
+     style="margin-top:.8rem">
+  <span>{{ "✓" if r.ready and not watch else ("!" if r.ready else "⚠") }}</span>
+  <div><strong>
+    {% if r.ready and not watch %}Good to add.
+    {% elif r.ready %}Nothing blocks it, {{ watch|length }} thing(s) to know.
+    {% else %}{{ failed|length }} thing(s) stop this.{% endif %}</strong>
+    <div class="small muted">{{ r.address }}</div></div>
+</div>
+<table>
+  <tbody>
+    {% for f in r.findings %}
+    <tr>
+      <td style="width:5.5rem">
+        {% if f.level == "pass" %}<span class="pill ok">pass</span>
+        {% elif f.level == "warn" %}<span class="pill warn">note</span>
+        {% else %}<span class="pill bad">fail</span>{% endif %}</td>
+      <td class="small"><strong>{{ f.what }}</strong>
+        <div class="muted">{{ f.detail }}</div>
+        {% if f.fix %}<div>{{ f.fix }}</div>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

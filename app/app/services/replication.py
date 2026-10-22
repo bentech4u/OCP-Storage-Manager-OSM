@@ -77,7 +77,9 @@ def run_repctl(job: Job, args: list[str], timeout: int | None = None) -> int:
     return job.run([repctl_bin()] + args, env=repctl_env(), cwd=str(work_dir))
 
 
-def capture(args: list[str], timeout: int = 90) -> subprocess.CompletedProcess:
+def capture(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+    """repctl reaches out to every cluster it knows, so one that does not answer holds
+    the whole command. A short timeout keeps a page from waiting on it."""
     work_dir = DATA_DIR / "logs"
     work_dir.mkdir(parents=True, exist_ok=True)
     return subprocess.run([repctl_bin()] + args, capture_output=True, text=True,
@@ -125,6 +127,9 @@ def list_clusters() -> dict:
     if proc.returncode != 0 or "FATAL" in text:
         if "failed to find any valid config" in text:
             out["error"] = "repctl has no clusters registered yet"
+        elif "timed out" in text.lower():
+            out["error"] = ("repctl did not answer in time. It contacts every cluster in "
+                            "its store, so one that is unreachable holds it up")
         else:
             out["error"] = text.strip().splitlines()[-1][:200] if text.strip() else "repctl failed"
         return out

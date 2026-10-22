@@ -48,6 +48,12 @@ database, so it runs happily on a disconnected installer host.
   storage class names a cluster and array that exist. It then walks the network paths the whole
   thing depends on - from the installer to every cluster and array, and from inside each cluster
   to its peer and to both arrays - using a driver pod that is already running, creating nothing.
+* Checks a cluster before it is added, from an address and a sign-in: the name, the API port,
+  the certificate and whether this host trusts it, that something answers like an API server,
+  and the OAuth endpoint on the applications domain, which is a second address on 443 that
+  `oc login` needs and a firewall often misses. With credentials it signs in, reports whether
+  the account is cluster-admin, the OpenShift version, and whether a driver is already there.
+  Nothing is stored and the sign-in goes into a temporary file that is deleted.
 * Assesses what it would take to add replication to a pair that does not have it: the driver
   version against the replication module that goes with it, the missing sidecar and controller,
   a secret that knows only the local array, classes with no replication, the SyncIQ licence,
@@ -155,6 +161,8 @@ osmctl rg list
 osmctl rg failover --rg <group> --target cluster-2 --yes
 osmctl rg preflight --rg <group> --source cluster-1 --target cluster-2
 osmctl rg claims --rg <group> --namespace t24
+osmctl check-cluster --api https://api.c.example.com:6443 --user kubeadmin
+osmctl readiness --source <a> --target <b>
 osmctl prechecks [--failed-only]    # is the environment ready, exits non-zero if not
 osmctl volumes --search infra-test  # claim, volume, group, policy, far side
 osmctl orphans                      # what is left over on one side only

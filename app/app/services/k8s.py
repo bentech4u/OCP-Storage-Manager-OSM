@@ -34,8 +34,15 @@ def run(kubeconfig: str | Path, args: list[str], timeout: int = 60,
         stdin_text: str | None = None) -> subprocess.CompletedProcess:
     env = tool_env()
     env["KUBECONFIG"] = str(kubeconfig)
-    return subprocess.run([cli()] + args, capture_output=True, text=True,
-                          timeout=timeout, env=env, input=stdin_text)
+    try:
+        return subprocess.run([cli()] + args, capture_output=True, text=True,
+                              timeout=timeout, env=env, input=stdin_text)
+    except subprocess.TimeoutExpired as exc:
+        # an unanswered command is a cluster that is not reachable, not a crash: say so
+        # here rather than letting it escape as a 500 with the command line in the log
+        raise ClusterError(
+            f"the cluster did not answer within {timeout}s (oc {' '.join(args[:3])}). "
+            "Check that its API address is reachable from this host.") from None
 
 
 def run_json(kubeconfig: str | Path, args: list[str], timeout: int = 60) -> dict:
@@ -100,16 +107,26 @@ def login_kubeconfig(server: str, username: str, password: str, cluster_id: str,
     """
     ensure_dirs()
     server = normalize_api_address(server)
-    hint = address_hint(server)
+    hint = reachable(server)                 # dns, then a short connection
     if hint:
-        raise ClusterError(f"cannot reach {server}: {hint}")
+        raise ClusterError(hint)
     path = kubeconfig_path(cluster_id)
     env = tool_env()
     env["KUBECONFIG"] = str(path)
-    cmd = [cli(), "login", server, "-u", username, "-p", password]
+    # The password goes in on stdin, where oc prompts for it. On the command line it
+    # would be visible to anyone running ps, and it lands in the journal whenever the
+    # command raises - which is exactly what a timeout does.
+    cmd = [cli(), "login", server, "-u", username]
     if insecure:
         cmd.append("--insecure-skip-tls-verify=true")
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env,
+                              input=password + "\n")
+    except subprocess.TimeoutExpired:
+        raise ClusterError(
+            f"{server} accepted the connection but did not answer the sign-in within 60s. "
+            "That is usually a proxy or firewall holding the connection open rather than "
+            "refusing it. Try the kubeconfig route instead.") from None
     if proc.returncode != 0:
         raw = (proc.stderr or proc.stdout).strip()
         raise ClusterError(_login_error(raw))
@@ -193,9 +210,54 @@ def _login_error(raw: str) -> str:
     return lines[-1][:300] if lines else "login failed"
 
 
+def server_of(kubeconfig: str | Path) -> str:
+    """The API address a kubeconfig points at, read from the file itself."""
+    try:
+        parsed = yaml.safe_load(Path(kubeconfig).read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return ""
+    contexts = {c.get("name"): c.get("context", {}) for c in parsed.get("contexts") or []}
+    wanted = (contexts.get(parsed.get("current-context", "")) or {}).get("cluster")
+    for entry in parsed.get("clusters") or []:
+        if wanted is None or entry.get("name") == wanted:
+            return (entry.get("cluster") or {}).get("server", "")
+    return ""
+
+
+def reachable(address: str, timeout: float = 6.0) -> str:
+    """Empty when the API address answers, otherwise why it does not.
+
+    Every oc call waits its own timeout, so three of them against an address that
+    silently drops packets is two minutes of nothing. One short connection first
+    turns that into an answer.
+    """
+    import socket
+    from urllib.parse import urlparse
+    if not address:
+        return ""
+    parsed = urlparse(address if "//" in address else "https://" + address)
+    host, port = parsed.hostname or "", parsed.port or 6443
+    if not host:
+        return ""
+    try:
+        socket.gethostbyname(host)
+    except OSError:
+        return address_hint(address)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return ""
+    except OSError as exc:
+        return (f"{host}:{port} does not answer from this host ({exc.strerror or exc}). "
+                "The API address is reachable from wherever the console runs, or nothing "
+                "else will work: check the route and the firewall between them.")
+
+
 def probe(kubeconfig: str | Path) -> dict:
     """Identity, version and node summary. Raises ClusterError when unreachable."""
     info: dict = {"kubeconfig": str(kubeconfig)}
+    hint = reachable(server_of(kubeconfig))
+    if hint:
+        raise ClusterError(hint)
     proc = run(kubeconfig, ["whoami", "--show-server"], timeout=30)
     if proc.returncode != 0:
         cfg = run(kubeconfig, ["config", "view", "--minify",
