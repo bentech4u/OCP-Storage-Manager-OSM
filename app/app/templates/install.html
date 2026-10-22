@@ -43,14 +43,15 @@
     </div>
     <details class="fold" {% if not tools_ready %}open{% endif %}>
       <summary><span class="chev">&#9656;</span> Install a tool from a file
-        <span class="muted small">helm, oc, kubectl or repctl, for a host with no
-          internet</span></summary>
+        <span class="muted small">helm, oc or kubectl, for a host with no internet.
+          repctl has its own section below</span></summary>
       <form hx-post="/install/tools/upload" hx-target="#output"
             hx-encoding="multipart/form-data">
         <div class="row three">
           <div class="field"><label>Tool</label>
             <select name="name">
-              {% for t in tools %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+              {% for t in tools if t != "repctl" %}<option value="{{ t }}"
+                >{{ t }}</option>{% endfor %}
             </select></div>
           <div class="field" style="grid-column:span 2"><label>Binary or the tar.gz it came in</label>
             <input type="file" name="binary">
