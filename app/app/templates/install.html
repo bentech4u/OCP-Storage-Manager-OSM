@@ -42,6 +42,27 @@
       {% endfor %}
     </div>
     <details class="fold" {% if not tools_ready %}open{% endif %}>
+      <summary><span class="chev">&#9656;</span> Install a tool from a file
+        <span class="muted small">helm, oc, kubectl or repctl, for a host with no
+          internet</span></summary>
+      <form hx-post="/install/tools/upload" hx-target="#output"
+            hx-encoding="multipart/form-data">
+        <div class="row three">
+          <div class="field"><label>Tool</label>
+            <select name="name">
+              {% for t in tools %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+            </select></div>
+          <div class="field" style="grid-column:span 2"><label>Binary or the tar.gz it came in</label>
+            <input type="file" name="binary">
+            <div class="hint">helm and oc are published as tar.gz; the binary is taken out of
+              the archive. It is checked for a Linux ELF header and then run to read its
+              version.</div></div>
+        </div>
+        <button class="btn"><span class="spin htmx-indicator"></span> Install it</button>
+      </form>
+    </details>
+
+    <details class="fold" {% if not tools_ready %}open{% endif %}>
       <summary><span class="chev">▸</span> Install or replace repctl
         <span class="muted small">{{ "repctl drives every replication action and is not here yet"
           if not tools_ready else "every tool is ready; open this to change the version" }}</span></summary>

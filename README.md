@@ -161,6 +161,7 @@ osmctl rg list
 osmctl rg failover --rg <group> --target cluster-2 --yes
 osmctl rg preflight --rg <group> --source cluster-1 --target cluster-2
 osmctl rg claims --rg <group> --namespace t24
+osmctl tools install --name helm --file helm-v3.19.0-linux-amd64.tar.gz
 osmctl check-cluster --api https://api.c.example.com:6443 --user kubeadmin
 osmctl readiness --source <a> --target <b>
 osmctl prechecks [--failed-only]    # is the environment ready, exits non-zero if not
@@ -247,6 +248,12 @@ current ids** (records what the arrays present now and repoints any policy still
 certificate), then **Update isilon-creds** (rewrites the secret on every cluster). If the peer
 array does not trust the new certificate yet, push the PEM from the same card. From a shell:
 `osmctl cert list`, then `adopt`, then `secrets`.
+
+**An installer with no internet and no tools.** Install & Configure → *Install a tool from a
+file* takes helm, oc, kubectl or repctl, either as the binary or as the tar.gz it was published
+in - helm ships the binary inside `linux-amd64/`, oc at the root of its archive, and the console
+takes it out either way. Each one is checked for a Linux ELF header and then run to read its
+version, so a wrong architecture is caught on the spot rather than at the first install.
 
 **On a FIPS host.** Session cookies are signed with SHA-256 rather than itsdangerous' default
 of SHA-1, which a FIPS kernel refuses outright - without it the console cannot issue or read a

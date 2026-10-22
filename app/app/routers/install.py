@@ -108,6 +108,29 @@ def install_page(request: Request):
 
 
 # --- tools ---------------------------------------------------------------------
+@router.post("/install/tools/upload", response_class=HTMLResponse)
+async def upload_tool(request: Request, name: str = Form(...),
+                      binary: UploadFile | None = File(None)):
+    """Install helm, oc, kubectl or repctl from a file, for a host with no internet."""
+    payload = await binary.read() if binary and binary.filename else b""
+    filename = binary.filename if binary and binary.filename else ""
+    if not payload:
+        return HTMLResponse('<div class="banner bad"><span>⚠</span><div>Choose the file '
+                            'first: the binary, or the tar.gz it was published in.</div></div>')
+
+    def work(job: Job):
+        path = tools.install_tool_from_upload(job, name, payload, filename)
+        audit.record("tools.install", actor=getattr(request.state, "user", ""),
+                     via=getattr(request.state, "via", ""), target=name, outcome="ok",
+                     detail=f"from {filename}, installed at {path}")
+        inventory.invalidate()
+
+    job = start(f"install {name}", "tools", work, actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
 @router.get("/install/repctl/releases", response_class=HTMLResponse)
 def repctl_releases(request: Request):
     try:

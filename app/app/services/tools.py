@@ -173,6 +173,76 @@ def install_repctl_from_url(job: Job, url: str) -> Path:
     return path
 
 
+# Where each tool is published, for the hosts an installer with internet may reach.
+TOOL_SOURCES = {
+    "helm": "get.helm.sh",
+    "oc": "mirror.openshift.com",
+    "kubectl": "dl.k8s.io",
+    "repctl": "github.com",
+}
+
+
+def _from_archive(payload: bytes, name: str) -> bytes:
+    """Pull one binary out of a tarball.
+
+    helm and oc are published as tar.gz, not as bare binaries: helm inside
+    linux-amd64/, oc at the root. Rather than ask someone to unpack it first and
+    explain which file to pick, take whichever member is called what we want.
+    """
+    import io
+    import tarfile
+    try:
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as tar:
+            wanted = [m for m in tar.getmembers()
+                      if m.isfile() and Path(m.name).name == name]
+            if not wanted:
+                inside = ", ".join(Path(m.name).name for m in tar.getmembers()
+                                   if m.isfile())[:160]
+                raise RuntimeError(f"no file called {name} inside that archive; it holds: "
+                                   f"{inside or 'nothing'}")
+            handle = tar.extractfile(wanted[0])
+            if handle is None:
+                raise RuntimeError(f"{name} could not be read out of the archive")
+            return handle.read()
+    except tarfile.TarError as exc:
+        raise RuntimeError(f"that file is not a readable tar archive: {exc}") from exc
+
+
+def install_tool_from_upload(job: Job, name: str, payload: bytes, filename: str) -> Path:
+    """Install any of the tools from a file, binary or tarball, for a host with no
+    internet."""
+    if name not in TOOLS:
+        raise RuntimeError(f"{name} is not one of the tools this console drives")
+    job.log(f"installing {name} from {filename} ({len(payload)} bytes)")
+    job.log("sha256 " + hashlib.sha256(payload).hexdigest())
+    if payload[:4] != b"\x7fELF":
+        if payload[:2] == b"\x1f\x8b" or payload[:4] in (b"ustar", b"PK\x03\x04"):
+            job.log("that is an archive; taking the binary out of it")
+            payload = _from_archive(payload, name)
+            job.log(f"  found {name}, {len(payload)} bytes")
+        else:
+            raise RuntimeError("that is neither a Linux binary nor a tar archive")
+    path = _install_binary(payload, name)
+    job.log(f"installed {path}")
+    if name == "repctl":
+        _announce_link(job, path)
+    _verify_tool(job, path, name)
+    return path
+
+
+def _verify_tool(job: Job, path: Path, name: str) -> None:
+    head = path.read_bytes()[:4]
+    if head != b"\x7fELF":
+        raise RuntimeError("that file is not a Linux binary (no ELF header)")
+    args = TOOLS.get(name, ["--help"])
+    proc = subprocess.run([str(path)] + args, capture_output=True, text=True, timeout=60,
+                          env=tool_env())
+    text = (proc.stdout or proc.stderr).strip().splitlines()
+    if proc.returncode != 0 and not text:
+        raise RuntimeError(f"{name} did not run on this host; wrong architecture or build?")
+    job.log(f"{name} runs here: {text[0][:120] if text else 'no version reported'}")
+
+
 def install_repctl_from_upload(job: Job, payload: bytes, filename: str) -> Path:
     job.log(f"installing uploaded file {filename} ({len(payload)} bytes)")
     job.log("sha256 " + hashlib.sha256(payload).hexdigest())

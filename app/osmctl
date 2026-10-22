@@ -886,6 +886,14 @@ def cmd_cert(args) -> None:
         raise SystemExit(0 if job.status == "ok" else 1)
 
 
+def cmd_tools_install(args) -> None:
+    payload = Path(args.file).read_bytes()
+    job = run_sync(f"install {args.name}", "tools",
+                   lambda j: tools.install_tool_from_upload(j, args.name, payload,
+                                                            Path(args.file).name))
+    raise SystemExit(0 if job.status == "ok" else 1)
+
+
 def cmd_check_cluster(args) -> None:
     from app.services import clustercheck
     import getpass
@@ -1105,6 +1113,10 @@ def build_parser() -> argparse.ArgumentParser:
     ti.add_argument("--build", action="store_true")
     ti.add_argument("--version", default="v1.15.0")
     ti.set_defaults(func=cmd_tools_install_repctl)
+    tu = t.add_parser("install", help="any tool from a file: the binary or its tar.gz")
+    tu.add_argument("--name", required=True, choices=["helm", "oc", "kubectl", "repctl"])
+    tu.add_argument("--file", required=True)
+    tu.set_defaults(func=cmd_tools_install)
 
     ad = sub.add_parser("admin", help="the console itself").add_subparsers(dest="sub", required=True)
     pw = ad.add_parser("passwd", help="set or reset the console password")
