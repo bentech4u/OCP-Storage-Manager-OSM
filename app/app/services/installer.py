@@ -482,10 +482,28 @@ def csm_cr(ns: str, opts: dict, existing: dict | None = None) -> dict:
         import copy as _copy
         spec = _copy.deepcopy(existing["spec"])
         if replication_on:
-            modules = [m for m in (spec.get("modules") or [])
-                       if m.get("name") != "replication"]
-            modules.append({"name": "replication", "enabled": True,
-                            "components": _replication_components(opts)})
+            modules = list(spec.get("modules") or [])
+            mine = next((m for m in modules if m.get("name") == "replication"), None)
+            if mine is not None:
+                # The operator writes this module into the resource itself, disabled,
+                # with the version and images that go with the installed driver. Turning
+                # it on is the whole change: replacing it with this console's idea of the
+                # components would drop that version and pin nothing in its place.
+                mine["enabled"] = True
+                for component in mine.get("components") or []:
+                    if component.get("name") != "dell-replication-controller-manager":
+                        continue
+                    envs = component.setdefault("envs", [])
+                    target = ",".join(opts.get("target_cluster_ids", []))
+                    for env in envs:
+                        if env.get("name") == "TARGET_CLUSTERS_IDS":
+                            env["value"] = target
+                            break
+                    else:
+                        envs.append({"name": "TARGET_CLUSTERS_IDS", "value": target})
+            else:
+                modules.append({"name": "replication", "enabled": True,
+                                "components": _replication_components(opts)})
             spec["modules"] = modules
         return {"apiVersion": existing.get("apiVersion", "storage.dell.com/v1"),
                 "kind": "ContainerStorageModule",
