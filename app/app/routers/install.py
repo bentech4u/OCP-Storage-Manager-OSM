@@ -550,6 +550,7 @@ async def install_driver(request: Request):
     if not arrays:
         return HTMLResponse('<div class="banner bad">Register at least one array first.</div>')
     opts = _opts(form)
+    opts["operator_upgrade"] = form.get("operator_upgrade") == "on"
     ns = form.get("namespace") or cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
     kc = cluster["kubeconfig"]
     upgrade = form.get("upgrade") == "on"
@@ -595,7 +596,8 @@ async def install_driver(request: Request):
                 (p["default_channel"] for p in pkgs if p["package"] == pkg), "stable")
             source = next((p["catalog"] for p in pkgs if p["package"] == pkg), "certified-operators")
             installer.operator_install(job, kc, pkg, channel, source)
-            installer.operator_apply_cr(job, kc, ns, opts, arrays, default_array)
+            installer.operator_apply_cr(job, kc, ns, opts, arrays, default_array,
+                                        manage_secret=manage_secret)
         else:
             installer.helm_install_driver(job, kc, ns, opts, arrays, upgrade=upgrade,
                                           default_array_id=default_array, release=release,

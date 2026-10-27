@@ -419,7 +419,54 @@ def operator_install(job: Job, kubeconfig: str, package: str, channel: str,
     raise ClusterError("the operator did not become ready in time")
 
 
-def csm_cr(ns: str, opts: dict) -> dict:
+def _replication_components(opts: dict) -> list[dict]:
+    return [
+        {"name": "dell-csi-replicator", "envs": [
+            {"name": "X_CSI_REPLICATION_PREFIX", "value": "replication.storage.dell.com"},
+            {"name": "X_CSI_REPLICATION_CONTEXT_PREFIX", "value": "powerscale"},
+        ]},
+        {"name": "dell-replication-controller-manager", "envs": [
+            {"name": "TARGET_CLUSTERS_IDS",
+             "value": ",".join(opts.get("target_cluster_ids", []))},
+            {"name": "REPLICATION_CTRL_LOG_LEVEL", "value": "info"},
+            {"name": "REPLICATION_CTRL_REPLICAS", "value": "1"},
+            {"name": "RETRY_INTERVAL_MIN", "value": "1s"},
+            {"name": "RETRY_INTERVAL_MAX", "value": "5m"},
+            {"name": "DISABLE_PVC_REMAP", "value": "false"},
+            {"name": "REPLICATION_ALLOW_PVC_CREATION_ON_TARGET", "value": "false"},
+        ]},
+    ]
+
+
+def existing_csm(kubeconfig: str, ns: str, name: str = "isilon") -> dict:
+    """The ContainerStorageModule already here, if there is one."""
+    try:
+        return run_json(kubeconfig, ["-n", ns, "get", "containerstoragemodule", name],
+                        timeout=40)
+    except ClusterError:
+        return {}
+
+
+def csm_state(kubeconfig: str, ns: str, name: str = "isilon") -> dict:
+    """What the operator makes of the resource: its state and anything it says."""
+    cr = existing_csm(kubeconfig, ns, name)
+    status = cr.get("status") or {}
+    messages = []
+    for key in ("state", "reason", "message"):
+        if status.get(key) and key != "state":
+            messages.append(str(status[key]))
+    for item in (status.get("conditions") or []):
+        text = item.get("message") or item.get("reason") or ""
+        if text:
+            messages.append(f"{item.get('type', '')}: {text}")
+    return {"exists": bool(cr), "state": status.get("state", ""),
+            "version": (cr.get("spec") or {}).get("version", ""),
+            "config_version": ((cr.get("spec") or {}).get("driver") or {}).get(
+                "configVersion", ""),
+            "messages": messages[:4]}
+
+
+def csm_cr(ns: str, opts: dict, existing: dict | None = None) -> dict:
     """ContainerStorageModule for csi-isilon.
 
     spec.version names the CSM release, which the operator maps to driver v2.17.1 and
@@ -427,6 +474,24 @@ def csm_cr(ns: str, opts: dict) -> dict:
     rejected by the CRD, so only one of them is ever emitted.
     """
     replication_on = bool(opts.get("replication", False))
+    if existing and existing.get("spec") and not opts.get("operator_upgrade"):
+        # An operator install that is already here was built by somebody, at a version
+        # that operator supports. Replacing its spec with this console's defaults is how
+        # a working driver ends up Failed and unchanged. Add the module, touch nothing
+        # else, and leave the version alone unless an upgrade was actually asked for.
+        import copy as _copy
+        spec = _copy.deepcopy(existing["spec"])
+        if replication_on:
+            modules = [m for m in (spec.get("modules") or [])
+                       if m.get("name") != "replication"]
+            modules.append({"name": "replication", "enabled": True,
+                            "components": _replication_components(opts)})
+            spec["modules"] = modules
+        return {"apiVersion": existing.get("apiVersion", "storage.dell.com/v1"),
+                "kind": "ContainerStorageModule",
+                "metadata": {"name": existing["metadata"]["name"],
+                             "namespace": existing["metadata"].get("namespace", ns)},
+                "spec": spec}
     common_envs = [
         {"name": "X_CSI_ISI_ENDPOINT_PORT", "value": str(opts.get("endpoint_port", 8080))},
         {"name": "X_CSI_ISI_SKIP_CERTIFICATE_VALIDATION",
@@ -452,25 +517,8 @@ def csm_cr(ns: str, opts: dict) -> dict:
     else:
         spec["version"] = CSM_VERSION
     if replication_on:
-        module: dict = {
-            "name": "replication", "enabled": True,
-            "components": [
-                {"name": "dell-csi-replicator", "envs": [
-                    {"name": "X_CSI_REPLICATION_PREFIX", "value": "replication.storage.dell.com"},
-                    {"name": "X_CSI_REPLICATION_CONTEXT_PREFIX", "value": "powerscale"},
-                ]},
-                {"name": "dell-replication-controller-manager", "envs": [
-                    {"name": "TARGET_CLUSTERS_IDS",
-                     "value": ",".join(opts.get("target_cluster_ids", []))},
-                    {"name": "REPLICATION_CTRL_LOG_LEVEL", "value": "info"},
-                    {"name": "REPLICATION_CTRL_REPLICAS", "value": "1"},
-                    {"name": "RETRY_INTERVAL_MIN", "value": "1s"},
-                    {"name": "RETRY_INTERVAL_MAX", "value": "5m"},
-                    {"name": "DISABLE_PVC_REMAP", "value": "false"},
-                    {"name": "REPLICATION_ALLOW_PVC_CREATION_ON_TARGET", "value": "false"},
-                ]},
-            ],
-        }
+        module: dict = {"name": "replication", "enabled": True,
+                        "components": _replication_components(opts)}
         if opts.get("config_version"):
             module["configVersion"] = REPLICATION_MODULE_VERSION
         spec["modules"] = [module]
@@ -481,14 +529,55 @@ def csm_cr(ns: str, opts: dict) -> dict:
 
 
 def operator_apply_cr(job: Job, kubeconfig: str, ns: str, opts: dict, arrays: list[dict],
-                      default_array_id: str | None = None) -> None:
+                      default_array_id: str | None = None,
+                      manage_secret: bool = True) -> None:
     ensure_namespace(job, kubeconfig, ns)
-    create_array_secret(job, kubeconfig, ns, arrays, default_array_id)
+    if manage_secret:
+        create_array_secret(job, kubeconfig, ns, arrays, default_array_id)
+    else:
+        job.log("leaving the existing isilon-creds secret alone, as asked")
     if opts.get("replication"):
         install_replication_crds(job, kubeconfig)
-    cr = csm_cr(ns, opts)
+
+    existing = existing_csm(kubeconfig, ns)
+    if existing:
+        before = csm_state(kubeconfig, ns)
+        job.log(f"a ContainerStorageModule is already here: version "
+                f"{before['version'] or before['config_version'] or 'unset'}, state "
+                f"{before['state'] or 'unknown'}")
+        if opts.get("operator_upgrade"):
+            job.log(f"it will be moved to {CSM_VERSION}, as asked. If this operator does "
+                    "not support that version it will report Failed and leave the driver "
+                    "as it is; upgrade the operator first in that case")
+        else:
+            job.log("keeping its version and settings; only the replication module is "
+                    "added. Tick the upgrade box to move it to this console's version")
+    cr = csm_cr(ns, opts, existing=existing)
     apply_manifest(job, kubeconfig, yaml.safe_dump(cr), "ContainerStorageModule isilon")
-    job.log("the operator now reconciles the driver; watch the pods on the dashboard")
+
+    # the operator answers in its own time, and a failure here is otherwise silent
+    job.log("waiting for the operator to say what it made of that")
+    import time as _time
+    last = ""
+    for _ in range(20):
+        _time.sleep(6)
+        state = csm_state(kubeconfig, ns)
+        line = f"  state {state['state'] or 'unknown'}"
+        if line != last:
+            job.log(line)
+            last = line
+        if (state["state"] or "").lower() in ("succeeded", "running"):
+            job.log("the operator accepted it")
+            break
+        if (state["state"] or "").lower() == "failed":
+            for message in state["messages"]:
+                job.log(f"  the operator says: {message[:220]}")
+            raise ClusterError(
+                "the operator could not reconcile the resource, so the driver is "
+                "unchanged. The usual cause is a version this operator does not know: "
+                "check the operator's own version against the one in the resource.")
+    else:
+        job.log("it has not settled yet; watch the driver pods on the dashboard")
 
 
 # --- storage classes ------------------------------------------------------------
