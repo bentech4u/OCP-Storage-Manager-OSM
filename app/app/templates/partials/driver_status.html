@@ -27,6 +27,17 @@
         {% if status.replication_crds %} &middot; replication definitions present{% endif %}
         {% if status.replication_controller %} &middot; replication controller running{% endif %}
       </div>
+      {% if status.sidecars %}
+      <div class="small {{ 'muted' if status.replication_sidecar else 'bad' }}">
+        {% if status.replication_sidecar %}
+          replication sidecar present
+        {% else %}
+          <strong>no dell-csi-replicator sidecar</strong>: this driver provisions ordinary
+          volumes only. A claim from a replicated class binds and no replication group is
+          created. Containers: {{ status.sidecars|join(', ') }}
+        {% endif %}
+      </div>
+      {% endif %}
       {% if status.storage_classes %}
       <div class="small muted">storage classes:
         {% for sc in status.storage_classes %}{{ sc.name }}{% if sc.replicated %} (replicated,

@@ -559,7 +559,8 @@ def driver_status(kubeconfig: str | Path, namespace: str) -> dict:
     out: dict = {"namespace": namespace, "pods": [], "controller_ready": False,
                  "node_ready": False, "storage_classes": [], "csidriver": False,
                  "replication_crds": False, "replication_controller": False,
-                 "replication_groups": [], "error": ""}
+                 "replication_groups": [], "replication_sidecar": False,
+                 "sidecars": [], "error": ""}
     try:
         pods = run_json(kubeconfig, ["-n", namespace, "get", "pods"]).get("items", [])
     except ClusterError as exc:
@@ -572,12 +573,20 @@ def driver_status(kubeconfig: str | Path, namespace: str) -> dict:
             continue
         statuses = p.get("status", {}).get("containerStatuses") or []
         ready = sum(1 for c in statuses if c.get("ready"))
+        containers = [c.get("name", "") for c in statuses]
+        if "-controller-" in name:
+            out["sidecars"] = containers
+            # the sidecar that turns a claim from a replicated class into a replication
+            # group. Without it the volume is provisioned as an ordinary one and nothing
+            # anywhere says replication was expected.
+            out["replication_sidecar"] = "dell-csi-replicator" in containers
         out["pods"].append({
             "name": name,
             "phase": p.get("status", {}).get("phase", ""),
             "ready": f"{ready}/{len(statuses)}" if statuses else "0/0",
             "restarts": sum(c.get("restartCount", 0) for c in statuses),
             "node": p.get("spec", {}).get("nodeName", ""),
+            "containers": containers,
             "all_ready": bool(statuses) and ready == len(statuses),
         })
     out["controller_ready"] = any(p["all_ready"] and "controller" in p["name"] for p in out["pods"])

@@ -61,9 +61,13 @@ def _page(request: Request, **extra):
             "driver": any(r["status"].get("controller_ready") for r in rows),
             "storage_classes": any(c.get("driver", {}).get("storage_classes")
                                    for c in data["clusters"]),
+            # wiring alone is not replication: without the sidecar on the driver, a
+            # claim from a replicated class is provisioned as an ordinary volume and no
+            # group is ever created
             "replication": len(data["clusters"]) > 1 and all(
                 (c.get("replication_config") or {}).get("clusterId")
                 and (c.get("replication_config") or {}).get("targets")
+                and (c.get("driver") or {}).get("replication_sidecar")
                 for c in data["clusters"]),
         },
     }
@@ -85,6 +89,16 @@ def _next_step(ctx: dict) -> dict:
                 "where": "#arrays", "label": "Arrays"}
     if not done["driver"]:
         return {"text": "Install the driver on a cluster.", "where": "#driver", "label": "Driver"}
+    missing_sidecar = [c["id"] for c in ctx["data"]["clusters"]
+                       if c.get("reachable") and (c.get("driver") or {}).get("pods")
+                       and not (c.get("driver") or {}).get("replication_sidecar")]
+    if len(ctx["clusters"]) > 1 and missing_sidecar:
+        return {"text": "The driver on " + ", ".join(missing_sidecar) + " is running without "
+                        "the dell-csi-replicator sidecar, so a claim from a replicated class "
+                        "is provisioned as an ordinary volume and no replication group is "
+                        "created. Install the driver again with replication, or add the "
+                        "module to whatever installed it.",
+                "where": "#driver", "label": "Driver"}
     if len(ctx["clusters"]) > 1 and not done["replication"]:
         return {"text": "Wire the two clusters together so they can replicate.",
                 "where": "#replication", "label": "Replication"}
