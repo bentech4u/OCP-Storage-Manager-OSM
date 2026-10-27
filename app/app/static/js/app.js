@@ -4,6 +4,31 @@
   const saved = localStorage.getItem("csm-theme");
   if (saved) root.setAttribute("data-theme", saved);
 
+  // Motion. The operating system may ask every site to stop animating; the flow line
+  // on a replication group is the one place here where movement carries meaning, so
+  // this console can be told to animate anyway, for this browser only.
+  const motion = localStorage.getItem("csm-motion");
+  if (motion) root.setAttribute("data-motion", motion);
+
+  window.toggleMotion = function () {
+    const on = root.getAttribute("data-motion") === "always";
+    if (on) {
+      root.removeAttribute("data-motion");
+      localStorage.removeItem("csm-motion");
+    } else {
+      root.setAttribute("data-motion", "always");
+      localStorage.setItem("csm-motion", "always");
+    }
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const button = document.getElementById("motion-toggle");
+    if (button) {
+      button.textContent = on ? "⏸" : "▶";
+      button.title = on
+        ? "Animations follow your system setting" + (reduced ? ", which is off" : "")
+        : "Animations on for this console, whatever the system says";
+    }
+  };
+
   window.toggleTheme = function () {
     const next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
     root.setAttribute("data-theme", next);

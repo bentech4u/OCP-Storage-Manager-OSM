@@ -316,7 +316,12 @@ a.step:hover { border-color: var(--brand); text-decoration: none; }
 .rg-arrow.stalled .rg-line::after { color: var(--warn); }
 .rg-arrow.stalled .rg-dot { animation: none; opacity: .25; }
 .rg-arrow-label { margin-top: .45rem; }
-@media (prefers-reduced-motion: reduce) { .rg-dot { animation: none; opacity: .6; } }
+/* A machine set to reduce motion gets none by default, which is right: the setting is
+   there for people who need it. This browser can still opt back in for this console
+   alone, which is what data-motion="always" means. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="always"]) .rg-dot { animation: none; opacity: .6; }
+}
 @media (max-width: 900px) { .rg-flow { grid-template-columns: 1fr; } .rg-line { display: none; } }
 
 .rg-updated { display: flex; align-items: center; justify-content: flex-end; gap: .4rem;

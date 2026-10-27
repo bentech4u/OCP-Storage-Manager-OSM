@@ -48,6 +48,8 @@
           {% if request.state.role == "viewer" %}<span class="pill warn">read only</span>{% endif %}
         </span>
         {% endif %}
+        <button class="btn ghost sm" id="motion-toggle" onclick="toggleMotion()"
+          title="Animations follow your system setting">⏸</button>
         <button class="btn ghost sm" onclick="toggleTheme()" title="Light or dark">◐</button>
         <a class="btn ghost sm" href="/logout">Sign out</a>
       </div>
