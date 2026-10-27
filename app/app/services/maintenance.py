@@ -138,6 +138,17 @@ def doctor() -> list[dict]:
     elif fips == "0":
         add("host", "FIPS mode", True, "off", "")
 
+    from .. import store as _store
+    damaged = sorted(DATA_DIR.glob("state.unreadable-*.json"))
+    if damaged:
+        add("host", "the state file was damaged at some point", False,
+            ", ".join(d.name for d in damaged[-3:]),
+            "the console carried on with its spare copy. Check what is in those files, "
+            "then delete them")
+    add("host", "a spare copy of the state exists", _store.PREVIOUS_FILE.exists(),
+        str(_store.PREVIOUS_FILE) if _store.PREVIOUS_FILE.exists() else "not written yet",
+        "it is written after every successful save, and used when state.json cannot be read")
+
     for name, tool in tool_status().items():
         add("tools", name, tool["found"], tool["version"] or tool["path"] or "not installed",
             "osmctl tools install-repctl" if name == "repctl" else f"install {name} on this host")

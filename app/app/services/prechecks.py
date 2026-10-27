@@ -557,6 +557,9 @@ def installed_checks(report: dict) -> list[dict]:
         _check(group, "driver", "info",
                f"csi-isilon {report['driver_version'] or 'not found'} in "
                f"{report['namespace']}", "", cid),
+        _check(group, "operator resource", "info",
+               ", ".join(f"{o['name']} {o['version']} {o['state']}"
+                         for o in report["operator"]) or "none", "", cid),
         _check(group, "installed by", "info",
                ", ".join(f"operator ({o['version']}, {o['state']})" for o in report["operator"])
                or ", ".join(f"helm release {h['name']} ({h['chart']})" for h in report["helm"])

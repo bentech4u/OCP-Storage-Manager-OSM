@@ -101,13 +101,51 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+PREVIOUS_FILE = STATE_FILE.with_suffix(".prev.json")
+
+
 def _read() -> dict:
+    """Read the state, and never answer 'empty' for a file that is merely damaged.
+
+    A host that loses power mid-write leaves a truncated file. Returning defaults for
+    that and then saving over it loses every cluster, array and setting, and logs the
+    operator out of an installation that was working the day before. So: keep the last
+    good copy, fall back to it, and put the damaged one aside instead of over it.
+    """
     if not STATE_FILE.exists():
+        if PREVIOUS_FILE.exists():
+            try:
+                recovered = json.loads(PREVIOUS_FILE.read_text())
+                save(recovered)
+                return _merge(recovered)
+            except (json.JSONDecodeError, OSError):
+                pass
         return json.loads(json.dumps(DEFAULT_STATE))
     try:
         data = json.loads(STATE_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        damaged = STATE_FILE.with_name(f"state.unreadable-{stamp}.json")
+        try:
+            STATE_FILE.replace(damaged)
+        except OSError:
+            damaged = STATE_FILE
+        if PREVIOUS_FILE.exists():
+            try:
+                data = json.loads(PREVIOUS_FILE.read_text())
+                print(f"state.json was unreadable ({exc}); kept it as {damaged.name} and "
+                      "carried on with the previous copy", flush=True)
+                save(data)
+                return _merge(data)
+            except (json.JSONDecodeError, OSError):
+                pass
+        print(f"state.json was unreadable ({exc}) and there is no previous copy; it is "
+              f"kept as {damaged.name} and this installation starts empty", flush=True)
         return json.loads(json.dumps(DEFAULT_STATE))
+    return _merge(data)
+
+
+def _merge(data: dict) -> dict:
     merged = json.loads(json.dumps(DEFAULT_STATE))
     merged.update(data)
     for key in ("setup",):                       # keep new sub-keys when upgrading
@@ -132,10 +170,31 @@ def save(state: dict) -> None:
         # a name of this process's own: two writers sharing one temp file delete it
         # from under each other if the lock ever fails to apply
         tmp = STATE_FILE.with_suffix(f".tmp.{os.getpid()}")
-        tmp.write_text(json.dumps(state, indent=2))
+        body = json.dumps(state, indent=2)
+        with open(tmp, "w") as handle:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())        # on the disk, not just in the page cache
         os.chmod(tmp, 0o600)
         match_owner(tmp)
         tmp.replace(STATE_FILE)
+        try:
+            directory = os.open(str(STATE_FILE.parent), os.O_RDONLY)
+            os.fsync(directory)
+            os.close(directory)
+        except OSError:
+            pass
+        # the spare copy follows a write that completed, so a torn file later falls
+        # back to the last state that was actually good rather than the one before it
+        try:
+            with open(PREVIOUS_FILE, "w") as spare:
+                spare.write(body)
+                spare.flush()
+                os.fsync(spare.fileno())
+            os.chmod(PREVIOUS_FILE, 0o600)
+            match_owner(PREVIOUS_FILE)
+        except OSError:
+            pass
 
 
 def update(fn) -> dict:

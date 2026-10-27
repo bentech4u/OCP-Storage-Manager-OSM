@@ -108,6 +108,19 @@ def assess(source_id: str, target_id: str) -> dict:
             f"{source_id} by {method_here}, {target_id} by {method_there}",
             "replication can still be enabled on both, but each needs its own method"))
 
+    # an operator that cannot reconcile its own resource changes nothing, quietly
+    for report, cluster in ((here, source_id), (there, target_id)):
+        for item in report["operator"]:
+            if (item.get("state") or "").lower() not in ("succeeded", "running", ""):
+                findings.append(_finding(
+                    "blocker", f"{cluster}: the operator rejected its own resource",
+                    f"ContainerStorageModule {item['name']} is {item['state']} at version "
+                    f"{item.get('version') or 'unset'}",
+                    "while it is in that state the operator changes nothing, so enabling "
+                    "replication has no effect. The usual cause is a version the installed "
+                    "operator does not know: compare the operator's version with the one "
+                    "in the resource"))
+
     # --- what replication adds -----------------------------------------------------
     for report, cluster in ((here, source_id), (there, target_id)):
         if not report["replicator"]:
