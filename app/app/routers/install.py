@@ -14,8 +14,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .. import config, store
 from ..config import DRIVER_NAMESPACE_DEFAULT, match_owner
-from ..services import (audit, certs, installer, inventory, k8s, manifests, replication,
-                        tools)
+from ..services import (audit, certs, csm, installer, inventory, k8s, manifests,
+                        replication, tools)
 from ..services.arrays import ArrayError, OneFS, secret_yaml
 from ..services.jobs import Job, start
 from ..templating import templates
@@ -658,6 +658,85 @@ def uninstall_driver(request: Request, cluster_id: str = Form(...), force: str =
 
     job = start(f"Uninstall driver on {cluster_id}", "driver", work, cluster=cluster_id, actor=getattr(request.state, "user", ""),
                  via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+# --- repairing an operator install ------------------------------------------------
+@router.get("/install/csm", response_class=HTMLResponse)
+def csm_panel(request: Request):
+    """What the operator makes of each cluster's resource, and what can be done."""
+    state = store.load()
+    rows = []
+    for cluster in state["clusters"].values():
+        ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+        try:
+            found = csm.inspect(cluster["kubeconfig"], ns)
+        except Exception as exc:                              # noqa: BLE001
+            found = {"exists": False, "error": str(exc)[:160]}
+        found["cluster"] = cluster["id"]
+        found["peers"] = [c["id"] for c in state["clusters"].values()
+                          if c["id"] != cluster["id"]]
+        rows.append(found)
+    return templates.TemplateResponse(request, "partials/csm.html", {"rows": rows})
+
+
+@router.get("/install/csm/{cid}/preview", response_class=HTMLResponse)
+def csm_preview(request: Request, cid: str):
+    """The resource as the operator last had it, without applying it."""
+    cluster = store.load()["clusters"].get(cid)
+    if not cluster:
+        return HTMLResponse('<div class="banner bad">unknown cluster</div>')
+    ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+    try:
+        plan = csm.restore_plan(cluster["kubeconfig"], ns)
+    except k8s.ClusterError as exc:
+        return HTMLResponse(f'<div class="banner bad"><span>⚠</span><div>{escape(str(exc))}'
+                            '</div></div>')
+    return templates.TemplateResponse(request, "partials/csm_preview.html",
+                                      {"plan": plan, "cluster": cid})
+
+
+@router.post("/install/csm/{cid}/restore", response_class=HTMLResponse)
+def csm_restore(request: Request, cid: str):
+    cluster = store.load()["clusters"].get(cid)
+    if not cluster:
+        return HTMLResponse('<div class="banner bad">unknown cluster</div>')
+    ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+
+    def work(job: Job):
+        result = csm.restore(job, cluster["kubeconfig"], ns)
+        audit.record("csm.restore", actor=getattr(request.state, "user", ""),
+                     via=getattr(request.state, "via", ""), target=cid,
+                     outcome="ok" if result["state"].lower() != "failed" else "failed",
+                     detail=f"state {result['state']}, previous copy at {result['backup']}")
+        inventory.invalidate()
+
+    job = start(f"repair the operator resource on {cid}", "driver", work, cluster=cid,
+                actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
+    return templates.TemplateResponse(request, "partials/console.html",
+                                      {"job": job.snapshot(), "follow": True})
+
+
+@router.post("/install/csm/{cid}/replication", response_class=HTMLResponse)
+def csm_replication(request: Request, cid: str, peer: str = Form(...)):
+    cluster = store.load()["clusters"].get(cid)
+    if not cluster:
+        return HTMLResponse('<div class="banner bad">unknown cluster</div>')
+    ns = cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+
+    def work(job: Job):
+        result = csm.enable_replication(job, cluster["kubeconfig"], ns, peer)
+        audit.record("csm.replication", actor=getattr(request.state, "user", ""),
+                     via=getattr(request.state, "via", ""), target=cid, outcome="ok",
+                     detail=f"module enabled, peer {peer}, sidecar "
+                            f"{'present' if result['sidecar'] else 'not yet'}")
+        inventory.invalidate()
+
+    job = start(f"enable replication on {cid}", "driver", work, cluster=cid,
+                actor=getattr(request.state, "user", ""),
+                via=getattr(request.state, "via", ""))
     return templates.TemplateResponse(request, "partials/console.html",
                                       {"job": job.snapshot(), "follow": True})
 

@@ -1,0 +1,47 @@
+{% for r in rows %}
+<div class="banner {{ 'bad' if r.state == 'Failed' else ('ok' if r.exists else '') }}"
+     style="margin:.2rem 1rem .6rem">
+  <span>{{ "⚠" if r.state == "Failed" else ("✓" if r.exists else "•") }}</span>
+  <div style="flex:1">
+    <strong>{{ r.cluster }}</strong>
+    {% if not r.exists %}
+      <span class="pill mute">no operator resource</span>
+      <div class="small muted">{{ r.error or "nothing here is managed by the CSM Operator" }}</div>
+    {% else %}
+      <span class="pill {{ 'bad' if r.state == 'Failed' else 'ok' }}">{{ r.state or "unknown" }}</span>
+      {% if r.sidecar %}<span class="pill ok">replication sidecar</span>
+      {% else %}<span class="pill warn">no sidecar</span>{% endif %}
+      <div class="small muted">
+        {% if r.version %}spec.version {{ r.version }} &middot; {% endif %}
+        configVersion {{ r.config_version or "unset" }} &middot; {{ r.image or "no image read" }}
+        &middot; path {{ r.isi_path or "unset" }}</div>
+      {% if r.version %}
+      <div class="small bad">spec.version is set. An operator that does not know that
+        version refuses the whole resource and changes nothing.</div>
+      {% endif %}
+      {% for m in r.messages %}{% if m %}<div class="small muted">{{ m }}</div>{% endif %}{% endfor %}
+      <div class="btn-row" style="margin-top:.5rem">
+        {% if r.saved_copy %}
+        <a class="btn sm" href="/install/csm/{{ r.cluster }}/preview" target="_blank">What the
+          operator kept</a>
+        <button class="btn sm" hx-post="/install/csm/{{ r.cluster }}/restore" hx-target="#output"
+          data-confirm="Put back the resource as the operator last had it on {{ r.cluster }}? Its own copy is used; what is there now is saved first.">Put it back</button>
+        {% else %}
+        <span class="small muted">the operator has kept no earlier copy here</span>
+        {% endif %}
+        {% if r.peers and not r.sidecar and not r.version %}
+        <form hx-post="/install/csm/{{ r.cluster }}/replication" hx-target="#output"
+              style="display:inline">
+          <select name="peer" class="sm">
+            {% for p in r.peers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+          </select>
+          <button class="btn sm" data-confirm="Enable the replication module on {{ r.cluster }}? The controller pods restart.">Enable replication</button>
+        </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="empty" style="margin:1rem">No clusters registered yet.</div>
+{% endfor %}

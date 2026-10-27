@@ -856,6 +856,51 @@ def cmd_cleanup_group(args) -> None:
     raise SystemExit(0 if job.status == "ok" else 1)
 
 
+def cmd_csm(args) -> None:
+    from app.services import csm
+    state = store.load()
+    cluster = state["clusters"].get(args.cluster) or die(f"unknown cluster {args.cluster}")
+    ns = args.namespace or cluster.get("namespace", DRIVER_NAMESPACE_DEFAULT)
+    kc = cluster["kubeconfig"]
+    if args.sub == "status":
+        found = csm.inspect(kc, ns)
+        if not found.get("exists"):
+            print("no ContainerStorageModule here")
+            return
+        for key in ("state", "version", "config_version", "isi_path", "image",
+                    "sidecar", "saved_copy"):
+            print(f"  {key:15} {found.get(key)}")
+        print(f"  {'modules':15} " + ", ".join(f"{k}={v}" for k, v in
+                                               (found.get("modules") or {}).items()))
+        for message in found.get("messages") or []:
+            if message:
+                print(f"  says            {message[:160]}")
+        return
+    if args.sub == "preview":
+        try:
+            plan = csm.restore_plan(kc, ns)
+        except Exception as exc:                              # noqa: BLE001
+            die(str(exc))
+        print(plan["yaml"])
+        return
+    if args.sub == "restore":
+        if not args.yes and input("put the operator's copy back? type yes: ").strip() != "yes":
+            print("nothing changed")
+            return
+        job = run_sync(f"repair the operator resource on {args.cluster}", "driver",
+                       lambda j: csm.restore(j, kc, ns), cluster=args.cluster)
+        raise SystemExit(0 if job.status == "ok" else 1)
+    if args.sub == "enable-replication":
+        peer = args.peer or die("--peer names the other cluster")
+        if not args.yes and input(f"enable replication, peer {peer}? type yes: ").strip() != "yes":
+            print("nothing changed")
+            return
+        job = run_sync(f"enable replication on {args.cluster}", "driver",
+                       lambda j: csm.enable_replication(j, kc, ns, peer),
+                       cluster=args.cluster)
+        raise SystemExit(0 if job.status == "ok" else 1)
+
+
 def cmd_cert(args) -> None:
     from app.services import certs
     if args.sub == "list":
@@ -1221,6 +1266,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="leave the volume group directory on the array")
     cg.add_argument("--yes", action="store_true")
     cg.set_defaults(func=cmd_cleanup_group)
+
+    cs = sub.add_parser("csm", help="an operator-managed driver: state, repair, replication")
+    css = cs.add_subparsers(dest="sub", required=True)
+    for sub_name in ("status", "preview", "restore", "enable-replication"):
+        sp = css.add_parser(sub_name)
+        sp.add_argument("--cluster", required=True)
+        sp.add_argument("--namespace")
+        if sub_name == "enable-replication":
+            sp.add_argument("--peer", required=True)
+        if sub_name in ("restore", "enable-replication"):
+            sp.add_argument("--yes", action="store_true")
+        sp.set_defaults(func=cmd_csm)
 
     ct = sub.add_parser("certificates", aliases=["cert"],
                         help="keep up with a renewed SyncIQ certificate")

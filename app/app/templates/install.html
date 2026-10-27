@@ -468,6 +468,19 @@
 </section>
 
 <!-- 6. replication wiring -->
+<!-- repairing an operator install -->
+<section class="section" id="csm">
+  <div class="card pad-0">
+    <div class="card-head" style="padding:1rem 1.1rem 0">
+      <div><h2>Operator resource</h2>
+        <div class="sub">for clusters the CSM Operator manages: what state it is in, the
+          copy the operator keeps of the last good one, and the replication module</div></div>
+      <button class="btn sm" hx-get="/install/csm" hx-target="#csm-panel">Check</button>
+    </div>
+    <div id="csm-panel" hx-get="/install/csm" hx-trigger="load"></div>
+  </div>
+</section>
+
 <!-- certificates, when the storage team renews one -->
 <section class="section" id="certificates">
   <div class="card pad-0">

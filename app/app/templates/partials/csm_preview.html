@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>What the operator kept — {{ cluster }}</title>
+<style>body{font-family:system-ui;background:#0b1020;color:#e7ecf5;padding:1.5rem;line-height:1.5}
+pre{background:#060a16;padding:1rem;border-radius:8px;overflow:auto;font-size:.8rem}
+.k{color:#9fb4d8}</style>
+<h1 style="font-size:1.05rem">{{ cluster }}: the resource as the operator last had it</h1>
+<p class="k">Now: configVersion {{ plan.was.config_version or "unset" }}{% if plan.was.version %},
+  spec.version {{ plan.was.version }}{% endif %}, path {{ plan.was.isi_path or "unset" }}<br>
+Would become: {% if plan.becomes.version %}<strong>spec.version
+  {{ plan.becomes.version }}</strong> &mdash; note the copy itself carries one, so this
+  restore puts it back; if that version is what the operator refused, this will not help
+  &middot; {% endif %}configVersion {{ plan.becomes.config_version or "unset" }}, path
+  {{ plan.becomes.isi_path or "unset" }}, modules
+  {% for k, v in plan.becomes.modules.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% if plan.dropped %}<br>{{ plan.dropped|length }} image field(s) left out, which the operator
+  fills in from configVersion{% endif %}</p>
+<pre>{{ plan.yaml }}</pre>
